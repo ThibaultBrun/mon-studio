@@ -25,6 +25,17 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 - **🎁 Morceaux prêts** : Hip-hop chill, Pop joyeuse, Électro, Reggaeton.
 - **🔁 Écouter ce motif** fait tourner le motif en boucle pendant qu'on le modifie.
 
+## 🏆 Le mode défi
+
+Comme les leçons d'Ableton Learning Music, 12 petits défis progressifs : batterie (battement de cœur, backbeat, charleston, boom bap, électro), accords, basse, mélodie, puis un premier morceau complet.
+
+- **🎧 Écoute et recopie** : on écoute le modèle (avec l'accompagnement quand il le faut) et on le reproduit dans la grille.
+- **🎨 À toi de créer** : une consigne libre, par exemple « une suite qui commence et finit par La m » ou « une mélodie qui finit sur la note de base ».
+- **✅ Vérifie !** donne un retour précis (« Il manque 2 coups sur Grosse caisse », « Mesure 3 : il faut l'accord Do »), **💡 Un indice** aide quand on bloque.
+- La progression est gardée, et le morceau en cours est mis de côté puis retrouvé en quittant les défis.
+
+![Défis](docs/defis.png)
+
 ## Et après
 
 - **💾 Enregistrer / 📂 Ouvrir** : les morceaux sont gardés en JSON dans `Musique/Mes créations/Projets`.
@@ -43,6 +54,7 @@ cd mon-studio
 
 - `musique.py` : gammes, accords, motifs, modèles prêts, conversion du morceau en notes.
 - `moteur.py` : FluidSynth via ctypes ; lecture en direct avec le séquenceur de FluidSynth (notes programmées 200 ms à l'avance), rendu WAV pour l'export.
+- `defis.py` : les défis, leurs vérifications et la progression.
 - `mon_studio.py` : l'interface PyQt6.
 
 Les sons viennent de la banque General MIDI FluidR3.

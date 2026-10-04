@@ -10,10 +10,11 @@ from pathlib import Path
 
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
-from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QMenu,
-                             QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
+                             QListWidget, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
+                             QVBoxLayout, QWidget)
 
+import defis
 import moteur
 import musique as m
 
@@ -49,6 +50,14 @@ QLabel#title { font-size: 22px; font-weight: bold; color: #4a90e2; }
 QLabel#lane { font-size: 17px; font-weight: bold; }
 QLabel#help { color: #555; font-size: 14px; }
 QComboBox, QSpinBox { font-size: 15px; padding: 4px 8px; }
+QFrame#defis { background: #fff8d6; border: 2px solid #f0c040; border-radius: 16px; }
+QFrame#defis QLabel { background: transparent; }
+QLabel#defi_title { font-size: 20px; font-weight: bold; color: #1a3d66; }
+QLabel#defi_text { font-size: 15px; color: #222; }
+QLabel#feedback { font-size: 17px; font-weight: bold; padding: 8px; border-radius: 10px; }
+QPushButton#check { background: #43a047; font-size: 18px; }
+QPushButton#next { background: #ff9800; font-size: 17px; }
+QListWidget { font-size: 15px; border-radius: 10px; }
 """
 
 
@@ -233,6 +242,95 @@ class GridEditor(QWidget):
             painter.drawLine(int(x), 0, int(x), rows * rh)
 
 
+# --- Panneau des défis ---
+class DefiPanel(QFrame):
+    def __init__(self, studio):
+        super().__init__()
+        self.studio = studio
+        self.index = None
+        self.setObjectName("defis")
+        self.setFixedWidth(420)
+        layout = QVBoxLayout(self)
+        header = QHBoxLayout()
+        title = QLabel("🏆 Défis")
+        title.setObjectName("title")
+        header.addWidget(title)
+        self.progress = QLabel()
+        header.addWidget(self.progress, 0, Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(header)
+        self.list = QListWidget()
+        self.list.setFixedHeight(270)  # les 12 défis sans défiler
+        self.list.currentRowChanged.connect(lambda row: row >= 0 and row != self.index and studio.start_defi(row))
+        layout.addWidget(self.list)
+        self.title = QLabel()
+        self.title.setObjectName("defi_title")
+        self.title.setWordWrap(True)
+        layout.addWidget(self.title)
+        self.text = QLabel()
+        self.text.setObjectName("defi_text")
+        self.text.setWordWrap(True)
+        layout.addWidget(self.text)
+        self.model_btn = QPushButton()
+        self.model_btn.clicked.connect(lambda: studio.listen_defi("modele"))
+        self.mine_btn = QPushButton("▶ Écouter ma version")
+        self.mine_btn.setObjectName("light")
+        self.mine_btn.clicked.connect(lambda: studio.listen_defi("moi"))
+        self.check_btn = QPushButton("✅ J'ai fini, vérifie !")
+        self.check_btn.setObjectName("check")
+        self.check_btn.clicked.connect(studio.check_defi)
+        self.hint_btn = QPushButton("💡 Un indice")
+        self.hint_btn.setObjectName("light")
+        self.hint_btn.clicked.connect(self.show_hint)
+        for button in (self.model_btn, self.mine_btn, self.check_btn, self.hint_btn):
+            layout.addWidget(button)
+        self.feedback = QLabel()
+        self.feedback.setObjectName("feedback")
+        self.feedback.setWordWrap(True)
+        self.feedback.setMinimumHeight(90)
+        self.feedback.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.feedback.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding)
+        layout.addWidget(self.feedback)
+        self.next_btn = QPushButton("➡ Défi suivant")
+        self.next_btn.setObjectName("next")
+        self.next_btn.clicked.connect(lambda: studio.start_defi(self.index + 1))
+        layout.addWidget(self.next_btn)
+        layout.addStretch()
+        quit_btn = QPushButton("🚪 Quitter les défis")
+        quit_btn.setObjectName("light")
+        quit_btn.clicked.connect(studio.quit_defis)
+        layout.addWidget(quit_btn)
+
+    def refresh_list(self):
+        done = defis.load_progress()
+        self.list.blockSignals(True)
+        self.list.clear()
+        for i, defi in enumerate(defis.DEFIS):
+            self.list.addItem(f"{'✅' if defi['id'] in done else '⬜'}  {i + 1}. {defi['titre']}")
+        if self.index is not None:
+            self.list.setCurrentRow(self.index)
+        self.list.blockSignals(False)
+        self.progress.setText(f"⭐ {len(done & {d['id'] for d in defis.DEFIS})} / {len(defis.DEFIS)} réussis")
+
+    def show_defi(self, index):
+        self.index = index
+        defi = defis.DEFIS[index]
+        kind = "🎧 Écoute et recopie" if defi["type"] == "reproduire" else "🎨 À toi de créer"
+        self.title.setText(f"{index + 1}. {defi['titre']}")
+        self.text.setText(f"{kind}\n\n{defi['texte']}")
+        self.model_btn.setText("🎧 Écouter le modèle" if defi["type"] == "reproduire" else "🎧 Écouter un exemple")
+        self.set_feedback("", None)
+        self.next_btn.setVisible(False)
+        self.refresh_list()
+
+    def show_hint(self):
+        self.set_feedback("💡 " + defis.DEFIS[self.index]["indice"], "hint")
+
+    def set_feedback(self, text, state):
+        colors = {True: "#c8f0c8", False: "#ffe0cc", "hint": "#ddeeff", None: "transparent"}
+        self.feedback.setText(text)
+        self.feedback.setStyleSheet(f"background: {colors[state]};")
+
+
 # --- Fenêtre principale ---
 class Studio(QWidget):
     def __init__(self):
@@ -252,8 +350,13 @@ class Studio(QWidget):
         self.next_step = 0
         self.first_step = 0
         self.save_path = None
+        self.custom_source = None
+        self.custom_name = None
+        self.before_defis = None   # morceau mis de côté pendant les défis
 
-        root = QVBoxLayout(self)
+        outer = QHBoxLayout(self)
+        root = QVBoxLayout()
+        outer.addLayout(root, 1)
         root.addLayout(self.build_top_bar())
         self.help = QLabel()
         self.help.setObjectName("help")
@@ -265,6 +368,9 @@ class Studio(QWidget):
         self.grid_scroll.setWidget(self.grid)
         self.grid_scroll.setWidgetResizable(True)  # la grille remplit la largeur, et défile si elle est plus grande
         root.addWidget(self.grid_scroll, 1)
+        self.defi_panel = DefiPanel(self)
+        self.defi_panel.hide()
+        outer.addWidget(self.defi_panel)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
@@ -295,6 +401,11 @@ class Studio(QWidget):
         self.key.currentIndexChanged.connect(self.set_key)
         bar.addWidget(self.key)
         bar.addStretch()
+        self.defis_btn = QPushButton("🏆 Défis")
+        self.defis_btn.setObjectName("next")
+        self.defis_btn.setCheckable(True)
+        self.defis_btn.clicked.connect(self.toggle_defis)
+        bar.addWidget(self.defis_btn)
         styles = QPushButton("🎁 Morceaux prêts")
         styles.setObjectName("light")
         menu = QMenu(styles)
@@ -678,6 +789,8 @@ class Studio(QWidget):
         """Position de lecture dans le motif affiché (en pas), ou None."""
         if self.playing == "pattern":
             return self.current_step()
+        if self.playing == "custom" and self.current_pattern():
+            return self.current_step() % (self.current_pattern()["bars"] * m.STEPS_PER_BAR)
         if self.playing == "song":
             step = self.current_step()
             cell = self.lane_data()["song"][step // m.STEPS_PER_BAR]
@@ -686,7 +799,9 @@ class Studio(QWidget):
         return None
 
     def compile(self):
-        if self.playing == "pattern":
+        if self.playing == "custom":
+            self.events, self.loop_steps = self.custom_source()
+        elif self.playing == "pattern":
             pattern = self.current_pattern()
             self.events = m.compile_pattern(self.project, self.lane, pattern) if pattern else {}
             self.loop_steps = (pattern["bars"] if pattern else 1) * m.STEPS_PER_BAR
@@ -695,11 +810,12 @@ class Studio(QWidget):
             self.loop_steps = m.SONG_BARS * m.STEPS_PER_BAR
         self.dirty = False
 
-    def toggle_play(self, mode, from_step=0):
-        was = self.playing
+    def toggle_play(self, mode, from_step=0, source=None, name=None):
+        was = (self.playing, self.custom_name)
         self.stop()
-        if was == mode and from_step == 0:
+        if was == (mode, name) and from_step == 0:
             return
+        self.custom_source, self.custom_name = source, name
         if mode == "pattern" and not self.current_pattern():
             return
         self.playing = mode
@@ -715,6 +831,7 @@ class Studio(QWidget):
 
     def stop(self):
         self.playing = None
+        self.custom_name = None
         self.engine.stop()
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶ Lecture")
@@ -734,6 +851,64 @@ class Studio(QWidget):
                 self.engine.note_at(time, channel, note, velocity, length * step_ms * 0.95)
             self.next_step += 1
         self.update_views()
+
+    # ---------- défis ----------
+    def toggle_defis(self, checked):
+        if checked:
+            done = defis.load_progress()
+            first = next((i for i, d in enumerate(defis.DEFIS) if d["id"] not in done), 0)
+            self.start_defi(first)
+        else:
+            self.quit_defis()
+
+    def start_defi(self, index):
+        if index >= len(defis.DEFIS):
+            self.defi_panel.set_feedback("🏆 Tu as fini tous les défis ! Tu es un vrai producteur !", True)
+            return
+        if self.before_defis is None:
+            self.before_defis = (self.project, self.save_path)
+        defi = defis.DEFIS[index]
+        self.load_project(defis.workspace(defi))
+        self.lane = defi["lane"]
+        self.refresh_editor()
+        self.defis_btn.setChecked(True)
+        self.defi_panel.show()
+        self.defi_panel.show_defi(index)
+
+    def current_defi(self):
+        return defis.DEFIS[self.defi_panel.index]
+
+    def listen_defi(self, which):
+        defi = self.current_defi()
+        if which == "modele":
+            source = lambda: defis.listen_model(defi, self.project)
+        else:
+            source = lambda: defis.listen_mine(defi, self.project)
+        self.toggle_play("custom", source=source, name=which)
+
+    def check_defi(self):
+        defi = self.current_defi()
+        ok, message = defis.check(defi, self.project)
+        self.defi_panel.set_feedback(message, ok)
+        if ok:
+            defis.save_success(defi["id"])
+            self.defi_panel.next_btn.setVisible(True)
+            self.defi_panel.refresh_list()
+            self.fanfare()
+
+    def fanfare(self):
+        now = self.engine.now()
+        for i, note in enumerate((72, 76, 79, 84)):
+            self.engine.note_at(now + 40 + i * 110, 2, note, 110, 300 if i < 3 else 700)
+
+    def quit_defis(self):
+        self.stop()
+        self.defi_panel.hide()
+        self.defis_btn.setChecked(False)
+        if self.before_defis:
+            project, path = self.before_defis
+            self.before_defis = None
+            self.load_project(project, path)
 
     # ---------- fichiers ----------
     def confirm_replace(self):
