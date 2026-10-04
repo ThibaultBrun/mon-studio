@@ -2,7 +2,12 @@
 import ctypes
 import wave
 
-SOUNDFONT = b"/usr/share/sounds/sf2/FluidR3_GM.sf2"
+from pathlib import Path
+
+# Banque de sons : GeneralUser GS si elle est installée (bien meilleure), sinon FluidR3
+SOUNDFONTS = [Path("/usr/share/sounds/sf2/GeneralUser-GS.sf2"), Path.home() / ".local/share/sounds/sf2/GeneralUser-GS.sf2",
+              Path("/usr/share/sounds/sf2/FluidR3_GM.sf2")]
+SOUNDFONT = str(next((p for p in SOUNDFONTS if p.exists()), SOUNDFONTS[-1])).encode()
 SAMPLE_RATE = 44100
 
 _lib = ctypes.CDLL("libfluidsynth.so.3")

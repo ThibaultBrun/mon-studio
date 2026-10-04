@@ -10,7 +10,8 @@ from pathlib import Path
 
 import musique as m
 
-PROGRESS_FILE = Path.home() / ".local/share/mon-studio/defis.json"
+# Hors du dossier du code (qui peut être en lecture seule, par exemple dans /opt)
+PROGRESS_FILE = Path.home() / ".local/share/mon-studio-donnees/defis.json"
 A_MINOR = 0      # indice de « La mineur » dans musique.KEYS
 EVERY_2 = list(range(0, 16, 2))
 

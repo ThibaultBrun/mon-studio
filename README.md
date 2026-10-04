@@ -57,8 +57,8 @@ cd mon-studio
 - `defis.py` : les défis, leurs vérifications et la progression.
 - `mon_studio.py` : l'interface PyQt6.
 
-Les sons viennent de la banque General MIDI FluidR3.
+Les sons viennent de la banque [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) (téléchargée par `install.sh`), avec la banque FluidR3 en secours.
 
 ## Licence
 
-MIT, voir [LICENSE](LICENSE). La banque de sons FluidR3 GM, installée par le paquet `fluid-soundfont-gm`, a sa propre licence (MIT également).
+MIT, voir [LICENSE](LICENSE). Les banques de sons ont leur propre licence : GeneralUser GS (libre d'utilisation, y compris dans des logiciels) et FluidR3 GM (MIT).

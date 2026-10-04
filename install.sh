@@ -13,4 +13,11 @@ if [ -d "$DESKTOP" ]; then
     cp "$HOME/.local/share/applications/mon-studio.desktop" "$DESKTOP/"
     chmod +x "$DESKTOP/mon-studio.desktop"
 fi
+# Banque de sons GeneralUser GS (meilleure que FluidR3), si elle n'est pas déjà installée pour tout le système
+SF=/usr/share/sounds/sf2/GeneralUser-GS.sf2
+if [ ! -f "$SF" ]; then
+    mkdir -p "$HOME/.local/share/sounds/sf2"
+    curl -fsSL -o "$HOME/.local/share/sounds/sf2/GeneralUser-GS.sf2" \
+        https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2
+fi
 echo "Mon Studio est installé : cherche « Mon Studio » dans le menu ou sur le bureau."
