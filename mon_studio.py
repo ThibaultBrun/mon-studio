@@ -17,7 +17,16 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout, 
 import moteur
 import musique as m
 
-CREATIONS = Path.home() / "Musique" / "Mes créations"
+def music_dir():
+    """Dossier Musique de l'utilisateur, quelle que soit la langue du système."""
+    try:
+        path = subprocess.run(["xdg-user-dir", "MUSIC"], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        path = ""
+    return Path(path) if path and Path(path) != Path.home() else Path.home() / "Musique"
+
+
+CREATIONS = music_dir() / "Mes créations"
 PROJECTS = CREATIONS / "Projets"
 LOOKAHEAD_MS = 200
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
