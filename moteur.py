@@ -92,6 +92,13 @@ class Engine:
         _lib.fluid_sequencer_send_at(self.sequencer, event, int(time_ms), 1)
         _lib.delete_fluid_event(event)
 
+    def note_on(self, channel, note, velocity=100):
+        """Note jouée tout de suite et tenue jusqu'à note_off (jeu au clavier)."""
+        _lib.fluid_synth_noteon(self.synth, channel, note, velocity)
+
+    def note_off(self, channel, note):
+        _lib.fluid_synth_noteoff(self.synth, channel, note)
+
     def preview(self, channel, note, velocity=100, duration_ms=300):
         """Joue une note tout de suite (quand on clique une case)."""
         self.note_at(self.now() + 5, channel, note, velocity, duration_ms)

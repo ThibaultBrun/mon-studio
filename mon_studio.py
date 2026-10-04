@@ -8,10 +8,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
-from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
-                             QListWidget, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
+from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+                             QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
                              QVBoxLayout, QWidget)
 
 import defis
@@ -31,6 +31,43 @@ CREATIONS = music_dir() / "Mes créations"
 PROJECTS = CREATIONS / "Projets"
 LOOKAHEAD_MS = 200
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+LATENCY_MS = 40  # délai de la carte son, pour caler les notes enregistrées au clavier
+# Jeu au clavier : touches repérées par leur position (codes XKB), pour marcher en AZERTY comme en QWERTY
+HOME_ROW = list(range(38, 48))   # rangée du milieu : Q S D F G H J K L M (AZERTY)
+TOP_ROW = list(range(24, 34))    # rangée du dessus : A Z E R T Y U I O P (AZERTY)
+HOME_LETTERS, TOP_LETTERS = "QSDFGHJKLM", "AZERTYUIOP"
+MAX_KEY_ROWS = {"batterie": len(m.DRUM_ROWS), "basse": m.BASS_ROWS, "accords": 7, "melodie": m.MELODY_ROWS}
+
+
+def key_slot(event):
+    """('milieu' | 'haut', position 0-9) de la touche, ou None."""
+    code = event.nativeScanCode()
+    if code in HOME_ROW:
+        return "milieu", HOME_ROW.index(code)
+    if code in TOP_ROW:
+        return "haut", TOP_ROW.index(code)
+    letter = event.text().upper()  # secours si le code n'est pas disponible
+    if letter and letter in HOME_LETTERS:
+        return "milieu", HOME_LETTERS.index(letter)
+    if letter and letter in TOP_LETTERS:
+        return "haut", TOP_LETTERS.index(letter)
+    return None
+
+
+def slot_row(lane, slot):
+    """Ligne de la grille jouée par une touche (0 = en bas), ou None."""
+    row_kind, index = slot
+    row = index if row_kind == "milieu" else (7 + index if lane == "melodie" else None)
+    return row if row is not None and row < MAX_KEY_ROWS[lane] else None
+
+
+def row_key(lane, row):
+    """Lettre de la touche qui joue cette ligne (pour l'afficher dans la grille)."""
+    if row < len(HOME_LETTERS) and row < MAX_KEY_ROWS[lane]:
+        return HOME_LETTERS[row]
+    if lane == "melodie" and 0 <= row - 7 < len(TOP_LETTERS):
+        return TOP_LETTERS[row - 7]
+    return ""
 
 STYLE = """
 QWidget { font-size: 15px; }
@@ -149,7 +186,7 @@ class BarNumbers(QWidget):
 
 # --- Éditeur de motif (grille) ---
 class GridEditor(QWidget):
-    LABEL_W = 150
+    LABEL_W = 170
 
     def __init__(self, studio):
         super().__init__()
@@ -219,11 +256,19 @@ class GridEditor(QWidget):
         col_w = (self.width() - self.LABEL_W) / columns
         color = lane_color(lane, self.studio.selected[lane])
         labels = self.row_labels()
+        held = self.studio.held_rows()
         for r in range(rows):
             y = r * rh
-            painter.fillRect(QRectF(0, y, self.LABEL_W, rh), QColor("#f0f0f0" if r % 2 else "#e6e6e6"))
+            row = rows - 1 - r
+            background = "#ffd54f" if row in held else ("#f0f0f0" if r % 2 else "#e6e6e6")
+            painter.fillRect(QRectF(0, y, self.LABEL_W, rh), QColor(background))
+            key = row_key(lane, row)
+            painter.setPen(QColor("#4a90e2"))
+            painter.setFont(QFont(self.font().family(), 10, QFont.Weight.Bold))
+            painter.drawText(QRectF(8, y, 22, rh), Qt.AlignmentFlag.AlignVCenter, key)
             painter.setPen(QColor("#333"))
-            painter.drawText(QRectF(14, y, self.LABEL_W - 16, rh), Qt.AlignmentFlag.AlignVCenter, labels[r])
+            painter.setFont(self.font())
+            painter.drawText(QRectF(30, y, self.LABEL_W - 32, rh), Qt.AlignmentFlag.AlignVCenter, labels[r])
         if lane == "accords":
             lit = {(6 - d, beat) for beat, d in enumerate(pattern["chords"]) if d is not None}
         else:
@@ -362,6 +407,7 @@ class Studio(QWidget):
         self.custom_source = None
         self.custom_name = None
         self.before_defis = None   # morceau mis de côté pendant les défis
+        self.held = {}             # touches enfoncées : slot -> (canal, notes, ligne, début en pas)
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(28, 18, 28, 18)  # de l'air autour de la fenêtre
@@ -387,6 +433,7 @@ class Studio(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(20)
+        QApplication.instance().installEventFilter(self)  # le clavier joue de la musique
         self.apply_instruments()
         self.refresh_all()
 
@@ -519,6 +566,12 @@ class Studio(QWidget):
         self.chord_style.addItems(m.CHORD_STYLES.values())
         self.chord_style.activated.connect(self.set_chord_style)
         bar.addWidget(self.chord_style)
+        self.record_btn = QPushButton("⏺ Enregistrer")
+        self.record_btn.setCheckable(True)
+        self.record_btn.setToolTip("Joue avec le clavier : tes notes s'inscrivent dans le motif")
+        self.record_btn.setStyleSheet("QPushButton:checked { background: #e53935; }")
+        self.record_btn.clicked.connect(self.toggle_record)
+        bar.addWidget(self.record_btn)
         self.loop_btn = QPushButton("🔁 Écouter ce motif")
         self.loop_btn.setCheckable(True)
         self.loop_btn.clicked.connect(lambda: self.toggle_play("pattern"))
@@ -577,7 +630,8 @@ class Studio(QWidget):
             "accords": "Choisis un accord par temps. Toutes ces notes vont ensemble dans la gamme !",
             "melodie": "Toutes les notes de la grille sont dans la gamme : impossible de jouer faux ! Plusieurs cases à la suite = une note tenue.",
         }
-        self.help.setText(f"💡 {tips[lane]}   Pour construire le morceau : choisis un motif, puis clique dans la ligne "
+        self.help.setText(f"💡 {tips[lane]}   ⌨ Joue avec les touches {'Q S D F G H J K L M (et A Z E R T Y U I O P plus aigu)' if lane == 'melodie' else 'Q S D F G H J K L'[:2 * MAX_KEY_ROWS[lane] - 1]}, "
+                          f"⏺ Enregistrer pour les ajouter au motif, espace pour lancer la lecture.\nPour construire le morceau : choisis un motif, puis clique dans la ligne "
                           "de temps pour le placer (clic droit pour l'enlever).")
         self.fit_grid()
         self.update_views()
@@ -844,6 +898,8 @@ class Studio(QWidget):
     def stop(self):
         self.playing = None
         self.custom_name = None
+        if hasattr(self, "record_btn"):
+            self.record_btn.setChecked(False)
         self.engine.stop()
         self.play_btn.setChecked(False)
         self.play_btn.setText("▶ Lecture")
@@ -862,6 +918,99 @@ class Studio(QWidget):
             for channel, note, velocity, length in self.events.get(self.next_step % self.loop_steps, []):
                 self.engine.note_at(time, channel, note, velocity, length * step_ms * 0.95)
             self.next_step += 1
+        self.update_views()
+
+    # ---------- jeu au clavier ----------
+    def eventFilter(self, obj, event):
+        if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease) or not self.isActiveWindow():
+            return False
+        if isinstance(QApplication.focusWidget(), (QLineEdit, QAbstractSpinBox)):
+            return False  # on laisse taper dans les cases de texte et le tempo
+        if event.isAutoRepeat():
+            return True
+        pressed = event.type() == QEvent.Type.KeyPress
+        if event.key() == Qt.Key.Key_Space:
+            if pressed:
+                self.toggle_play("song")
+            return True
+        slot = key_slot(event)
+        if slot is None:
+            return False
+        if pressed:
+            self.key_down(slot)
+        else:
+            self.key_up(slot)
+        return True
+
+    def play_position(self):
+        """Position de lecture en pas (non arrondie), corrigée du délai de la carte son."""
+        return (self.engine.now() - LATENCY_MS - self.start_tick) / self.step_ms()
+
+    def chord_now(self):
+        if self.playing == "song":
+            step = self.current_step()
+            return m.chord_at(self.project, step // m.STEPS_PER_BAR, (step % m.STEPS_PER_BAR) // 4)
+        return 0
+
+    def key_down(self, slot):
+        lane = self.lane
+        row = slot_row(lane, slot)
+        if row is None or slot in self.held:
+            return
+        key = m.KEYS[self.project["key"]]
+        channel = m.LANE_INFO[lane][1]
+        if lane == "batterie":
+            notes, velocity = [m.DRUM_ROWS[row][1]], m.DRUM_ROWS[row][2]
+        elif lane == "basse":
+            notes, velocity = [m.scale_note(key, self.chord_now() + row, 36)], 105
+        elif lane == "accords":
+            notes, velocity = m.chord_voicing(key, row), 85
+        else:
+            notes, velocity = [m.scale_note(key, row, 60 if key[1] < 5 else 48)], 100
+        for note in notes:
+            self.engine.note_on(channel, note, velocity)
+        start = round(self.play_position()) if self.recording() else None
+        self.held[slot] = (channel, notes, row, start)
+        if start is not None and lane in ("batterie", "accords"):
+            self.record_note(row, start, 1)
+        self.grid.update()
+
+    def key_up(self, slot):
+        if slot not in self.held:
+            return
+        channel, notes, row, start = self.held.pop(slot)
+        for note in notes:
+            self.engine.note_off(channel, note)
+        if start is not None and self.recording() and self.lane in ("basse", "melodie"):
+            self.record_note(row, start, max(1, round(self.play_position()) - start))
+        self.grid.update()
+
+    def held_rows(self):
+        return {row for _, _, row, _ in self.held.values()}
+
+    def recording(self):
+        return self.record_btn.isChecked() and self.playing == "pattern" and self.current_pattern() is not None
+
+    def toggle_record(self, checked):
+        if checked and not self.current_pattern():
+            self.record_btn.setChecked(False)
+            return
+        if checked and self.playing != "pattern":
+            self.toggle_play("pattern")
+            self.record_btn.setChecked(True)
+
+    def record_note(self, row, start, length):
+        """Inscrit une note jouée au clavier dans le motif, à la case la plus proche."""
+        pattern = self.current_pattern()
+        total = pattern["bars"] * m.STEPS_PER_BAR
+        if self.lane == "accords":
+            pattern["chords"][(start % total) // 4] = row
+        else:
+            for i in range(min(length, total)):
+                cell = [row, (start + i) % total]
+                if cell not in pattern["cells"]:
+                    pattern["cells"].append(cell)
+        self.changed()
         self.update_views()
 
     # ---------- défis ----------

@@ -25,6 +25,16 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 - **🎁 Morceaux prêts** : Hip-hop chill, Pop joyeuse, Électro, Reggaeton.
 - **🔁 Écouter ce motif** fait tourner le motif en boucle pendant qu'on le modifie.
 
+## ⌨ Jouer au clavier
+
+Les touches de l'ordinateur jouent la ligne sélectionnée, par leur position (AZERTY comme QWERTY) :
+
+- rangée du milieu **Q S D F G H J K L M** : la batterie (Q = grosse caisse, S = caisse claire…), la basse (Q = la base de l'accord du moment), les accords de la gamme, ou la mélodie ;
+- rangée du dessus **A Z E R T Y U I O P** : la mélodie plus aiguë ;
+- la note tient tant qu'on garde la touche, et sa ligne s'allume dans la grille ;
+- **⏺ Enregistrer** fait tourner le motif en boucle et inscrit ce qu'on joue dans la grille, calé sur la case la plus proche ;
+- **espace** lance ou arrête la lecture.
+
 ## 🏆 Le mode défi
 
 Comme les leçons d'Ableton Learning Music, 12 petits défis progressifs : batterie (battement de cœur, backbeat, charleston, boom bap, électro), accords, basse, mélodie, puis un premier morceau complet.
