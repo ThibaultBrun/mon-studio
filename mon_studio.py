@@ -223,7 +223,7 @@ class GridEditor(QWidget):
             y = r * rh
             painter.fillRect(QRectF(0, y, self.LABEL_W, rh), QColor("#f0f0f0" if r % 2 else "#e6e6e6"))
             painter.setPen(QColor("#333"))
-            painter.drawText(QRectF(8, y, self.LABEL_W - 10, rh), Qt.AlignmentFlag.AlignVCenter, labels[r])
+            painter.drawText(QRectF(14, y, self.LABEL_W - 16, rh), Qt.AlignmentFlag.AlignVCenter, labels[r])
         if lane == "accords":
             lit = {(6 - d, beat) for beat, d in enumerate(pattern["chords"]) if d is not None}
         else:
@@ -256,8 +256,10 @@ class DefiPanel(QFrame):
         self.studio = studio
         self.index = None
         self.setObjectName("defis")
-        self.setFixedWidth(420)
+        self.setFixedWidth(430)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
         header = QHBoxLayout()
         title = QLabel("🏆 Défis")
         title.setObjectName("title")
@@ -362,7 +364,10 @@ class Studio(QWidget):
         self.before_defis = None   # morceau mis de côté pendant les défis
 
         outer = QHBoxLayout(self)
+        outer.setContentsMargins(28, 18, 28, 18)  # de l'air autour de la fenêtre
+        outer.setSpacing(24)
         root = QVBoxLayout()
+        root.setSpacing(12)
         outer.addLayout(root, 1)
         root.addLayout(self.build_top_bar())
         self.help = QLabel()
