@@ -51,7 +51,7 @@ QLabel#lane { font-size: 17px; font-weight: bold; }
 QLabel#help { color: #555; font-size: 14px; }
 QComboBox, QSpinBox { font-size: 15px; padding: 4px 8px; }
 QFrame#defis { background: #fff8d6; border: 2px solid #f0c040; border-radius: 16px; }
-QFrame#defis QLabel { background: transparent; }
+QFrame#defis QLabel { background: transparent; color: #1a1a1a; }
 QLabel#defi_title { font-size: 20px; font-weight: bold; color: #1a3d66; }
 QLabel#defi_text { font-size: 15px; color: #222; }
 QLabel#feedback { font-size: 17px; font-weight: bold; padding: 8px; border-radius: 10px; }
@@ -69,6 +69,13 @@ def lane_color(lane, index=0):
 
 def short_name(pattern):
     return pattern["name"].split(" · ")[0]
+
+
+def apply_light_theme(app):
+    """Toujours le même thème clair et coloré, même si le bureau est en thème sombre
+    (sinon du texte blanc par défaut se retrouve sur nos fonds clairs)."""
+    app.setStyle("Fusion")
+    app.setPalette(app.style().standardPalette())
 
 
 # --- Ligne de temps (une rangée par instrument) ---
@@ -328,7 +335,7 @@ class DefiPanel(QFrame):
     def set_feedback(self, text, state):
         colors = {True: "#c8f0c8", False: "#ffe0cc", "hint": "#ddeeff", None: "transparent"}
         self.feedback.setText(text)
-        self.feedback.setStyleSheet(f"background: {colors[state]};")
+        self.feedback.setStyleSheet(f"background: {colors[state]}; color: #1a1a1a;")
 
 
 # --- Fenêtre principale ---
@@ -985,6 +992,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("Mon Studio")
     app.setDesktopFileName("mon-studio")
+    apply_light_theme(app)
     app.setFont(QFont(app.font().family(), 11))
     window = Studio()
     window.showMaximized()
