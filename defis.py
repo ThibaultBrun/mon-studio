@@ -225,7 +225,7 @@ DEFIS = [
      "indice": "Grosse caisse : cases 1, 8 et 11. Caisse claire : 5 et 13. Charleston : une case sur deux.",
      "modele": m.template("batterie", "Boom bap")},
     {"id": "electro", "titre": "Danse électro", "lane": "batterie", "type": "reproduire", "tempo": 124,
-     "instruments": {"batterie": 2},
+     "instruments": {"batterie": 4},
      "texte": "En électro, la grosse caisse tape sur tous les temps : c'est le « four on the floor ».\n\n"
               "Recopie le modèle : grosse caisse, clap, et deux sortes de charleston.",
      "indice": "Grosse caisse sur chaque temps, clap sur 5 et 13, charleston ouvert entre les temps (3, 7, 11, 15), "

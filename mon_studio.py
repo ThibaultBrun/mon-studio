@@ -558,7 +558,7 @@ class Studio(QWidget):
             self.lane_labels[lane] = label
             h.addWidget(label)
             box = QComboBox()
-            box.addItems([name for name, _, _ in m.INSTRUMENTS[lane]])
+            box.addItems([instrument[0] for instrument in m.INSTRUMENTS[lane]])
             box.currentIndexChanged.connect(lambda i, l=lane: self.set_instrument(l, i))
             self.instrument_boxes[lane] = box
             h.addWidget(box, 1)
@@ -918,8 +918,13 @@ class Studio(QWidget):
         self.update_views()
 
     def channels(self):
-        return {m.LANE_INFO[lane][1]: m.INSTRUMENTS[lane][self.lane_data(lane)["instrument"]][1:] + (self.lane_data(lane)["volume"],)
-                for lane in m.LANES}
+        result = {}
+        for lane in m.LANES:
+            data = self.lane_data(lane)
+            instruments = m.INSTRUMENTS[lane]
+            _, bank, program, *extra = instruments[min(data["instrument"], len(instruments) - 1)]
+            result[m.LANE_INFO[lane][1]] = (bank, program, data["volume"], extra[0] if extra else None)
+        return result
 
     def apply_instruments(self):
         self.engine.setup(self.channels())

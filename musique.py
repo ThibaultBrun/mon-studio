@@ -21,10 +21,16 @@ LANE_INFO = {  # titre, canal MIDI, couleur
     "accords": ("🎹 Accords", 1, "#3d8bff"),
     "melodie": ("🎵 Mélodie", 2, "#2fbf71"),
 }
-# Instruments : (nom affiché, banque, programme General MIDI)
+# Instruments : (nom affiché, banque, programme General MIDI[, banque de sons à part])
+# Les vraies batteries AVL (paquet avldrums.lv2-soundfont) sont des kits enregistrés à plusieurs forces de frappe.
+AVL = "/usr/share/sounds/sf2/"
 INSTRUMENTS = {
-    "batterie": [("Batterie standard", 128, 0), ("Batterie rock", 128, 16), ("Batterie électro", 128, 24),
-                 ("Boîte à rythmes 808", 128, 25), ("Batterie jazz", 128, 32)],
+    "batterie": [("Vraie batterie pop / rock", 0, 0, AVL + "Black_Pearl_4_LV2.sf2"),
+                 ("Vraie batterie rock", 0, 0, AVL + "Red_Zeppelin_4_LV2.sf2"),
+                 ("Vraie batterie jazz", 0, 0, AVL + "Blonde_Bop_HR_LV2.sf2"),
+                 ("Vraie batterie vintage", 0, 0, AVL + "Buskmans_Holiday_LV2.sf2"),
+                 ("Batterie électro", 128, 24), ("Boîte à rythmes 808", 128, 25),
+                 ("Batterie synthé standard", 128, 0), ("Batterie synthé rock", 128, 16)],
     "basse": [("Basse électrique", 0, 33), ("Basse slap", 0, 36), ("Basse synthé", 0, 38), ("Basse synthé 2", 0, 39),
               ("Contrebasse", 0, 32)],
     "accords": [("Piano", 0, 0), ("Piano électrique", 0, 4), ("Nappe douce", 0, 89), ("Cordes", 0, 48),
@@ -212,13 +218,13 @@ STYLES = {
         {"accords": "A---A---A---A---", "batterie": "AAABCAABCAABCAAB", "basse": "A-------B---B---",
          "melodie": "....A-A-A-A-A-A-"}),
     "Électro": lambda: song_style(
-        "Électro", 124, 0, {"batterie": 2, "basse": 2, "accords": 2, "melodie": 1},
+        "Électro", 124, 0, {"batterie": 4, "basse": 2, "accords": 2, "melodie": 1},
         {"batterie": ["Électro 4/4", "Roulement"], "basse": ["Électro", "Octaves disco"],
          "accords": ["Épique (1-6-3-7)"], "melodie": ["Écho", "Montée"]},
         {"accords": "A---A---A---A---", "batterie": "AAAAAAABAAAAAAAB", "basse": "....AAAABBBBBBBB",
          "melodie": "....AAAAAAABAAAB"}, chord_style="arpege"),
     "Reggaeton": lambda: song_style(
-        "Reggaeton", 94, 2, {"batterie": 2, "basse": 2, "accords": 1, "melodie": 0},
+        "Reggaeton", 94, 2, {"batterie": 5, "basse": 2, "accords": 1, "melodie": 0},
         {"batterie": ["Reggaeton", "Roulement"], "basse": ["Reggaeton"],
          "accords": ["Épique (1-6-3-7)"], "melodie": ["Notes longues"]},
         {"accords": "A---A---A---A---", "batterie": "AAAAAAABAAAAAAAB", "basse": "A---------------",

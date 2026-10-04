@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installe le raccourci de Mon Studio pour l'utilisateur courant.
 # Dépendances (une fois, en administrateur) :
-#   sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm ffmpeg
+#   sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm avldrums.lv2-soundfont ffmpeg
 set -euo pipefail
 DIR=$(cd "$(dirname "$0")" && pwd)
 ICON="$HOME/.local/share/icons/mon-studio.svg"

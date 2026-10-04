@@ -63,10 +63,24 @@ def _new_synth(realtime):
     return settings, synth
 
 
+_loaded = {}  # (synthé, fichier) -> numéro de la banque chargée
+
+
+def sfont_id(synth, path):
+    """Charge une banque de sons supplémentaire (une seule fois par synthé). None si elle n'existe pas."""
+    if (synth, path) not in _loaded:
+        number = _lib.fluid_synth_sfload(synth, path.encode(), 0) if Path(path).exists() else -1
+        _loaded[(synth, path)] = number if number >= 0 else None
+    return _loaded[(synth, path)]
+
+
 def setup_channels(synth, channels):
-    """channels : {canal: (banque, programme, volume 0-127)}"""
-    for channel, (bank, program, volume) in channels.items():
-        _lib.fluid_synth_program_select(synth, channel, 1, bank, program)
+    """channels : {canal: (banque, programme, volume 0-127, fichier de banque à part ou None)}"""
+    for channel, (bank, program, volume, extra) in channels.items():
+        number = sfont_id(synth, extra) if extra else 1
+        if number is None:  # banque absente : batterie standard de la banque principale
+            number, bank, program = 1, 128, 0
+        _lib.fluid_synth_program_select(synth, channel, number, bank, program)
         _lib.fluid_synth_cc(synth, channel, 7, volume)
 
 
@@ -112,6 +126,8 @@ class Engine:
         self.stop()
         _lib.delete_fluid_sequencer(self.sequencer)
         _lib.delete_fluid_audio_driver(self.driver)
+        for key in [k for k in _loaded if k[0] == self.synth]:
+            del _loaded[key]
         _lib.delete_fluid_synth(self.synth)
         _lib.delete_fluid_settings(self.settings)
 
@@ -165,5 +181,7 @@ def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5, swi
             else:
                 _lib.fluid_synth_noteoff(synth, channel, note)
         write_until(end_frame)
+    for key in [k for k in _loaded if k[0] == synth]:
+        del _loaded[key]
     _lib.delete_fluid_synth(synth)
     _lib.delete_fluid_settings(settings)

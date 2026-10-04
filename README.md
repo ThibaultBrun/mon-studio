@@ -25,6 +25,10 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 - **🎁 Morceaux prêts** : Hip-hop chill, Pop joyeuse, Électro, Reggaeton.
 - **🔁 Écouter ce motif** fait tourner le motif en boucle pendant qu'on le modifie.
 
+## 🥁 De vraies batteries
+
+Les batteries « Vraie batterie » (pop / rock, rock, jazz, vintage) sont les kits [AVL Drumkits](https://www.bandshed.net/avldrumkits/) : de vraies batteries enregistrées à plusieurs forces de frappe, installées par le paquet `avldrums.lv2-soundfont`. Si elles manquent, Mon Studio utilise la batterie standard de la banque principale.
+
 ## 🎶 Un jeu plus vivant
 
 - **Accents** : clic droit sur une case allumée pour un coup **fort ▲**, puis **doux ▽**, puis normal.
@@ -65,7 +69,7 @@ Comme les leçons d'Ableton Learning Music, 12 petits défis progressifs : batte
 ## Installation (Ubuntu / Debian)
 
 ```bash
-sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm ffmpeg
+sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm avldrums.lv2-soundfont ffmpeg
 git clone https://github.com/ThibaultBrun/mon-studio.git
 cd mon-studio
 ./install.sh
