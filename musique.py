@@ -40,6 +40,9 @@ BASS_ROWS = 8      # notes de la gamme au-dessus de la base de l'accord : 1 (bas
 MELODY_ROWS = 15   # deux octaves de la gamme
 CHORD_STYLES = {"tenu": "Tenu", "rythme": "Rythmé", "arpege": "Arpège"}
 LENGTHS = [1, 2, 4]  # longueur d'un motif en mesures
+ACCENTS = {"fort": 1.25, "doux": 0.5}  # multiplicateur de force d'une case
+MAX_SWING = 60       # en %, retard maximum des doubles croches « faibles »
+DEFAULT_HUMAN = 40   # en %, petites imperfections de force et de placement, comme un vrai musicien
 
 
 # --- Théorie ---
@@ -160,7 +163,7 @@ def template(lane, name):
 # --- Morceau ---
 def new_project():
     return {
-        "name": "Mon morceau", "tempo": 95, "key": 0,
+        "name": "Mon morceau", "tempo": 95, "key": 0, "swing": 0, "humain": DEFAULT_HUMAN,
         "lanes": {lane: {"instrument": 0, "volume": 100, "muted": False, "patterns": [], "song": [None] * SONG_BARS}
                   for lane in LANES},
     }
@@ -233,6 +236,19 @@ def chord_at(project, bar, beat):
     return 0 if degree is None else degree
 
 
+def accent_of(pattern, row, step):
+    return pattern.get("accents", {}).get(f"{row}:{step}")
+
+
+def accented(velocity, accent):
+    return max(1, min(127, round(velocity * ACCENTS.get(accent, 1.0))))
+
+
+def swing_offset(step, swing, step_ms):
+    """Retard (ms) d'un pas : le swing décale les doubles croches « faibles » (pas impairs)."""
+    return (swing / 100) * step_ms * 0.66 if step % 2 else 0.0
+
+
 def runs(cells, total_steps):
     """Cases allumées -> notes (ligne, début, longueur) : les cases qui se suivent sur une ligne sont liées."""
     lit = {(r, s) for r, s in cells if s < total_steps}
@@ -255,14 +271,15 @@ def pattern_notes(project, lane, pattern, chord_for_step):
     if lane == "batterie":
         # chaque case de batterie est un coup séparé, même si elles se suivent
         lit = {(r, s) for r, s in pattern["cells"] if s < total}
-        notes = [(s, DRUM_ROWS[r][1], DRUM_ROWS[r][2], 1) for r, s in sorted(lit, key=lambda c: c[1])]
+        notes = [(s, DRUM_ROWS[r][1], accented(DRUM_ROWS[r][2], accent_of(pattern, r, s)), 1)
+                 for r, s in sorted(lit, key=lambda c: c[1])]
     elif lane == "basse":
         for row, step, length in runs(pattern["cells"], total):
             degree = chord_for_step(step) + row
-            notes.append((step, scale_note(key, degree, 36), 105, length))
+            notes.append((step, scale_note(key, degree, 36), accented(105, accent_of(pattern, row, step)), length))
     elif lane == "melodie":
         for row, step, length in runs(pattern["cells"], total):
-            notes.append((step, scale_note(key, row, 60 if key[1] < 5 else 48), 100, length))
+            notes.append((step, scale_note(key, row, 60 if key[1] < 5 else 48), accented(100, accent_of(pattern, row, step)), length))
     elif lane == "accords":
         chords = pattern["chords"]
         beat = 0

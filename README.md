@@ -25,6 +25,17 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 - **🎁 Morceaux prêts** : Hip-hop chill, Pop joyeuse, Électro, Reggaeton.
 - **🔁 Écouter ce motif** fait tourner le motif en boucle pendant qu'on le modifie.
 
+## 🎶 Un jeu plus vivant
+
+- **Accents** : clic droit sur une case allumée pour un coup **fort ▲**, puis **doux ▽**, puis normal.
+- **Swing** : retarde régulièrement les doubles croches « faibles » pour faire balancer le rythme (hip-hop, jazz).
+- **Humain** : petites imperfections aléatoires de placement (jusqu'à ±15 ms) et de force, comme un vrai musicien. À 0, tout est pile sur la grille.
+
+## 🛟 Sans risque
+
+- **↩ Annuler / ↪ Rétablir** (Ctrl+Z, Ctrl+Y) ; un glisser dans la grille s'annule d'un coup.
+- **Sauvegarde automatique** : le morceau revient tel quel au prochain lancement, même après une fermeture par erreur.
+
 ## ⌨ Jouer au clavier
 
 Les touches de l'ordinateur jouent la ligne sélectionnée, par leur position (AZERTY comme QWERTY) :

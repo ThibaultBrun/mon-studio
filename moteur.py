@@ -1,5 +1,6 @@
 """Mon Studio : le moteur audio (FluidSynth), pour jouer en direct et exporter en WAV."""
 import ctypes
+import random
 import wave
 
 from pathlib import Path
@@ -115,15 +116,28 @@ class Engine:
         _lib.delete_fluid_settings(self.settings)
 
 
-def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5):
+def humanize(velocity, amount):
+    """Petite variation de force (amount en %), comme un vrai musicien qui ne tape jamais exactement pareil."""
+    spread = round(14 * amount / 100)
+    return max(1, min(127, velocity + random.randint(-spread, spread)))
+
+
+def jitter_ms(amount):
+    """Petit décalage aléatoire dans le temps (amount en %) : jamais pile sur la grille, comme un humain."""
+    return random.uniform(-15, 15) * amount / 100
+
+
+def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5, swing=0, human=0):
     """Fabrique le fichier WAV du morceau. events : {pas: [(canal, note, force, durée en pas)]}."""
     settings, synth = _new_synth(realtime=False)
     setup_channels(synth, channels)
     step_frames = SAMPLE_RATE * 60 / tempo / 4
     timeline = []  # (image, 1 = début / 0 = fin, canal, note, force)
     for step, notes in events.items():
+        delay = (swing / 100) * step_frames * 0.66 if step % 2 else 0
         for channel, note, velocity, length in notes:
-            start = int(step * step_frames)
+            start = max(0, int(step * step_frames + delay + jitter_ms(human) * SAMPLE_RATE / 1000))
+            velocity = humanize(velocity, human)
             timeline.append((start, 1, channel, note, velocity))
             timeline.append((start + int(length * step_frames * 0.95), 0, channel, note, 0))
     timeline.sort(key=lambda e: (e[0], e[1]))  # les fins avant les débuts au même instant

@@ -2,10 +2,12 @@
 """Mon Studio : composer un morceau avec 4 lignes (batterie, basse, accords, mélodie) et des motifs à placer
 sur une ligne de temps. Pensé pour un enfant : gros boutons, notes toujours dans la gamme, modèles prêts."""
 import copy
+import json
 import re
 import subprocess
 import sys
 import tempfile
+import time as clock
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, pyqtSignal
@@ -28,6 +30,10 @@ def music_dir():
 
 
 CREATIONS = music_dir() / "Mes créations"
+DATA = Path.home() / ".local/share/mon-studio-donnees"
+AUTOSAVE = DATA / "sauvegarde-auto.json"
+UNDO_LIMIT = 80
+UNDO_GROUP_SECONDS = 0.6  # les clics rapprochés (glisser dans la grille) s'annulent d'un coup
 PROJECTS = CREATIONS / "Projets"
 LOOKAHEAD_MS = 200
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -233,7 +239,12 @@ class GridEditor(QWidget):
 
     def mousePressEvent(self, event):
         cell = self.cell_at(event.position())
-        if cell:
+        if not cell:
+            return
+        if event.button() == Qt.MouseButton.RightButton:
+            self.drag_value = None
+            self.studio.cycle_accent(*cell)
+        else:
             self.drag_value = self.studio.toggle_cell(*cell)
 
     def mouseMoveEvent(self, event):
@@ -279,7 +290,12 @@ class GridEditor(QWidget):
             for r in range(rows):
                 rect = QRectF(x + 1, r * rh + 1, col_w - 2, rh - 2)
                 if (r, c) in lit:
-                    painter.fillRect(rect, color)
+                    accent = None if lane == "accords" else m.accent_of(pattern, rows - 1 - r, c)
+                    fill = color.darker(140) if accent == "fort" else color.lighter(155) if accent == "doux" else color
+                    painter.fillRect(rect, fill)
+                    if accent:
+                        painter.setPen(QColor("white" if accent == "fort" else "#555"))
+                        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "▲" if accent == "fort" else "▽")
                 else:
                     shade = "#fafafa" if (c // per_beat) % 2 == 0 else "#efefef"
                     painter.fillRect(rect, QColor(shade))
@@ -393,7 +409,13 @@ class Studio(QWidget):
         self.setStyleSheet(STYLE)
         self.resize(1500, 920)
         self.engine = moteur.Engine()
-        self.project = m.STYLES["Hip-hop chill"]()
+        self.project = self.restore_autosave() or m.STYLES["Hip-hop chill"]()
+        self.undo_stack, self.redo_stack = [], []
+        self.snapshot = json.dumps(self.project)
+        self.last_change = 0.0
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.setSingleShot(True)
+        self.autosave_timer.timeout.connect(self.autosave)
         self.lane = "batterie"
         self.selected = {lane: 0 if self.project["lanes"][lane]["patterns"] else None for lane in m.LANES}
         self.playing = None      # None, "song" ou "pattern"
@@ -459,6 +481,35 @@ class Studio(QWidget):
         self.key.addItems([k[0] for k in m.KEYS])
         self.key.currentIndexChanged.connect(self.set_key)
         bar.addWidget(self.key)
+        self.swing_label = QLabel()
+        self.swing_label.setMinimumWidth(95)
+        bar.addWidget(self.swing_label)
+        self.swing = QSlider(Qt.Orientation.Horizontal)
+        self.swing.setRange(0, m.MAX_SWING)
+        self.swing.setFixedWidth(110)
+        self.swing.setToolTip("Le swing fait « balancer » le rythme, comme en hip-hop ou en jazz")
+        self.swing.valueChanged.connect(self.set_swing)
+        bar.addWidget(self.swing)
+        self.human_label = QLabel()
+        self.human_label.setMinimumWidth(105)
+        bar.addWidget(self.human_label)
+        self.human = QSlider(Qt.Orientation.Horizontal)
+        self.human.setRange(0, 100)
+        self.human.setFixedWidth(110)
+        self.human.setToolTip("Petites imperfections de force et de placement, comme un vrai musicien. "
+                              "À 0, tout est pile sur la grille (effet robot).")
+        self.human.valueChanged.connect(self.set_human)
+        bar.addWidget(self.human)
+        self.undo_btn = QPushButton("↩")
+        self.undo_btn.setToolTip("Annuler (Ctrl+Z)")
+        self.undo_btn.clicked.connect(self.undo)
+        self.redo_btn = QPushButton("↪")
+        self.redo_btn.setToolTip("Rétablir (Ctrl+Y)")
+        self.redo_btn.clicked.connect(self.redo)
+        for button in (self.undo_btn, self.redo_btn):
+            button.setObjectName("light")
+            button.setFixedWidth(52)
+            bar.addWidget(button)
         bar.addStretch()
         self.defis_btn = QPushButton("🏆 Défis")
         self.defis_btn.setObjectName("next")
@@ -580,12 +631,17 @@ class Studio(QWidget):
 
     # ---------- affichage ----------
     def refresh_all(self):
-        for widget in (self.tempo, self.key):
+        for widget in (self.tempo, self.key, self.swing, self.human):
             widget.blockSignals(True)
         self.tempo.setValue(self.project["tempo"])
         self.key.setCurrentIndex(self.project["key"])
-        for widget in (self.tempo, self.key):
+        self.swing.setValue(self.project.get("swing", 0))
+        self.human.setValue(self.project.get("humain", m.DEFAULT_HUMAN))
+        for widget in (self.tempo, self.key, self.swing, self.human):
             widget.blockSignals(False)
+        self.human_label.setText(f"Humain {self.project.get('humain', m.DEFAULT_HUMAN)} %")
+        self.swing_label.setText(f"Swing {self.project.get('swing', 0)} %")
+        self.update_undo_buttons()
         for lane in m.LANES:
             data = self.project["lanes"][lane]
             for widget, setter, value in [(self.instrument_boxes[lane], "setCurrentIndex", data["instrument"]),
@@ -625,7 +681,7 @@ class Studio(QWidget):
         if is_chords and pattern:
             self.chord_style.setCurrentIndex(list(m.CHORD_STYLES).index(pattern["style"]))
         tips = {
-            "batterie": "Clique dans la grille pour poser un coup de batterie. Chaque case est un petit moment du rythme.",
+            "batterie": "Clique dans la grille pour poser un coup de batterie, clic droit pour un coup fort ▲ ou doux ▽.",
             "basse": "La basse suit les accords tout seule : « Note 1 » est toujours la base de l'accord. Plusieurs cases à la suite = une note tenue.",
             "accords": "Choisis un accord par temps. Toutes ces notes vont ensemble dans la gamme !",
             "melodie": "Toutes les notes de la grille sont dans la gamme : impossible de jouer faux ! Plusieurs cases à la suite = une note tenue.",
@@ -757,19 +813,36 @@ class Studio(QWidget):
                 self.preview_cell(row)
             elif not result and on:
                 pattern["cells"].remove(cell)
+                pattern.get("accents", {}).pop(f"{row}:{col}", None)
         self.changed()
         self.update_views()
         return result
 
-    def preview_cell(self, row):
+    def cycle_accent(self, row, col):
+        """Clic droit sur une case allumée : normal -> fort -> doux -> normal."""
+        pattern = self.current_pattern()
+        if self.lane == "accords" or [row, col] not in pattern["cells"]:
+            return
+        accents = pattern.setdefault("accents", {})
+        key = f"{row}:{col}"
+        following = {None: "fort", "fort": "doux", "doux": None}[accents.get(key)]
+        if following:
+            accents[key] = following
+        else:
+            accents.pop(key, None)
+        self.preview_cell(row, m.accented(100, following))
+        self.changed()
+        self.update_views()
+
+    def preview_cell(self, row, velocity=None):
         key = m.KEYS[self.project["key"]]
         if self.lane == "batterie":
-            _, note, velocity = m.DRUM_ROWS[row]
-            self.engine.preview(9, note, velocity, 200)
+            _, note, base = m.DRUM_ROWS[row]
+            self.engine.preview(9, note, velocity or base, 200)
         elif self.lane == "basse":
-            self.engine.preview(0, m.scale_note(key, row, 36), 105, 300)
+            self.engine.preview(0, m.scale_note(key, row, 36), velocity or 105, 300)
         else:
-            self.engine.preview(2, m.scale_note(key, row, 60 if key[1] < 5 else 48), 100, 300)
+            self.engine.preview(2, m.scale_note(key, row, 60 if key[1] < 5 else 48), velocity or 100, 300)
 
     # ---------- ligne de temps ----------
     def timeline_clicked(self, lane, bar, right):
@@ -812,6 +885,7 @@ class Studio(QWidget):
             self.engine.stop()
             self.start_tick = now - position * self.step_ms()
             self.next_step = int(position) + 1
+        self.changed()
 
     def set_key(self, index):
         self.project["key"] = index
@@ -821,10 +895,22 @@ class Studio(QWidget):
     def set_instrument(self, lane, index):
         self.lane_data(lane)["instrument"] = index
         self.apply_instruments()
+        self.changed()
 
     def set_volume(self, lane, value):
         self.lane_data(lane)["volume"] = value
         self.apply_instruments()
+        self.changed()
+
+    def set_human(self, value):
+        self.project["humain"] = value
+        self.human_label.setText(f"Humain {value} %")
+        self.changed()
+
+    def set_swing(self, value):
+        self.project["swing"] = value
+        self.swing_label.setText(f"Swing {value} %")
+        self.changed()
 
     def set_muted(self, lane, muted):
         self.lane_data(lane)["muted"] = muted
@@ -841,6 +927,59 @@ class Studio(QWidget):
     # ---------- lecture ----------
     def changed(self):
         self.dirty = True
+        self.record_history()
+        self.autosave_timer.start(1500)
+
+    def record_history(self):
+        """Garde l'état d'avant chaque action, pour pouvoir l'annuler."""
+        current = json.dumps(self.project)
+        if current == self.snapshot:
+            return
+        now = clock.monotonic()
+        if now - self.last_change > UNDO_GROUP_SECONDS:
+            self.undo_stack = (self.undo_stack + [self.snapshot])[-UNDO_LIMIT:]
+            self.redo_stack.clear()
+        self.snapshot, self.last_change = current, now
+        self.update_undo_buttons()
+
+    def update_undo_buttons(self):
+        if hasattr(self, "undo_btn"):
+            self.undo_btn.setEnabled(bool(self.undo_stack))
+            self.redo_btn.setEnabled(bool(self.redo_stack))
+
+    def restore_state(self, state):
+        self.project = json.loads(state)
+        self.snapshot, self.last_change = state, 0.0
+        for lane in m.LANES:
+            count = len(self.project["lanes"][lane]["patterns"])
+            index = self.selected.get(lane)
+            self.selected[lane] = None if not count else min(index or 0, count - 1)
+        self.dirty = True
+        self.apply_instruments()
+        self.refresh_all()
+        self.autosave_timer.start(1500)
+
+    def undo(self):
+        if self.undo_stack:
+            self.redo_stack.append(json.dumps(self.project))
+            self.restore_state(self.undo_stack.pop())
+
+    def redo(self):
+        if self.redo_stack:
+            self.undo_stack.append(json.dumps(self.project))
+            self.restore_state(self.redo_stack.pop())
+
+    def restore_autosave(self):
+        try:
+            return m.load(AUTOSAVE)
+        except (OSError, ValueError):
+            return None
+
+    def autosave(self):
+        """Sauvegarde automatique du morceau (pas des exercices des défis)."""
+        project = self.before_defis[0] if self.before_defis else self.project
+        DATA.mkdir(parents=True, exist_ok=True)
+        m.save(project, AUTOSAVE)
 
     def step_ms(self):
         return 60000 / self.project["tempo"] / 4
@@ -915,8 +1054,11 @@ class Studio(QWidget):
         step_ms = self.step_ms()
         while self.start_tick + self.next_step * step_ms < now + LOOKAHEAD_MS:
             time = self.start_tick + self.next_step * step_ms
+            delay = m.swing_offset(self.next_step, self.project.get("swing", 0), step_ms)
+            human = self.project.get("humain", m.DEFAULT_HUMAN)
             for channel, note, velocity, length in self.events.get(self.next_step % self.loop_steps, []):
-                self.engine.note_at(time, channel, note, velocity, length * step_ms * 0.95)
+                self.engine.note_at(max(self.engine.now(), time + delay + moteur.jitter_ms(human)), channel, note,
+                                    moteur.humanize(velocity, human), length * step_ms * 0.95)
             self.next_step += 1
         self.update_views()
 
@@ -926,6 +1068,14 @@ class Studio(QWidget):
             return False
         if isinstance(QApplication.focusWidget(), (QLineEdit, QAbstractSpinBox)):
             return False  # on laisse taper dans les cases de texte et le tempo
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.type() == QEvent.Type.KeyPress:
+                shift = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                actions = {Qt.Key.Key_Z: self.redo if shift else self.undo, Qt.Key.Key_Y: self.redo, Qt.Key.Key_S: self.save_song}
+                if event.key() in actions:
+                    actions[event.key()]()
+                    return True
+            return False
         if event.isAutoRepeat():
             return True
         pressed = event.type() == QEvent.Type.KeyPress
@@ -1079,9 +1229,12 @@ class Studio(QWidget):
     def load_project(self, project, path=None):
         self.stop()
         self.project = project
+        self.undo_stack, self.redo_stack = [], []
+        self.snapshot, self.last_change = json.dumps(project), 0.0
         self.save_path = path
         self.selected = {lane: 0 if project["lanes"][lane]["patterns"] else None for lane in m.LANES}
-        self.changed()
+        self.dirty = True
+        self.autosave_timer.start(1500)
         self.apply_instruments()
         self.refresh_all()
 
@@ -1128,7 +1281,8 @@ class Studio(QWidget):
         last_bar = max((b for lane in m.LANES for b, c in enumerate(self.lane_data(lane)["song"]) if c), default=0)
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / "morceau.wav"
-            moteur.render_wav(wav, events, (last_bar + 1) * m.STEPS_PER_BAR, self.project["tempo"], self.channels())
+            moteur.render_wav(wav, events, (last_bar + 1) * m.STEPS_PER_BAR, self.project["tempo"], self.channels(),
+                              swing=self.project.get("swing", 0), human=self.project.get("humain", m.DEFAULT_HUMAN))
             mp3 = CREATIONS / f"Mes créations - {name}.mp3"
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-af", "loudnorm=I=-14:TP=-1",
                             "-codec:a", "libmp3lame", "-q:a", "2", "-metadata", "artist=Mes créations",
@@ -1137,6 +1291,7 @@ class Studio(QWidget):
                                                     "Ouvre Mixxx : il est dans le dossier « Mes créations ».")
 
     def closeEvent(self, event):
+        self.autosave()
         self.timer.stop()
         self.engine.close()
         event.accept()
