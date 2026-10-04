@@ -29,6 +29,16 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 
 Les batteries « Vraie batterie » (pop / rock, rock, jazz, vintage) sont les kits [AVL Drumkits](https://www.bandshed.net/avldrumkits/) : de vraies batteries enregistrées à plusieurs forces de frappe, installées par le paquet `avldrums.lv2-soundfont`. Si elles manquent, Mon Studio utilise la batterie standard de la banque principale.
 
+## 🎹 Des instruments soignés
+
+Pour chaque instrument, Mon Studio prend la banque de sons la plus riche en enregistrements (mesuré dans les fichiers SF2) :
+
+- **MuseScore General** : piano de concert (144 échantillons, ~19 min de son), cordes (414 échantillons), nappe, chœur, cuivres, guitare, basses ;
+- **FluidR3** : vibraphone, flûte, boîte à musique, saxophone, violon, piano électrique ;
+- **GeneralUser GS** : synthés et orgue.
+
+Chaque instrument a une correction de volume mesurée pour qu'ils sonnent tous au même niveau. Chaque ligne a sa réverbe, son chorus et sa place dans la stéréo (accords un peu à gauche, mélodie un peu à droite), et l'export passe par un mastering léger (compression, limiteur, volume standard). Seuls les instruments utilisés sont chargés en mémoire.
+
 ## 🎶 Un jeu plus vivant
 
 - **Accents** : clic droit sur une case allumée pour un coup **fort ▲**, puis **doux ▽**, puis normal.
@@ -63,13 +73,13 @@ Comme les leçons d'Ableton Learning Music, 12 petits défis progressifs : batte
 
 ## Et après
 
-- **💾 Enregistrer / 📂 Ouvrir** : les morceaux sont gardés en JSON dans `Musique/Mes créations/Projets`.
+- **💾 Sauvegarder / 📂 Ouvrir** : les morceaux sont gardés en JSON dans `Musique/Mes créations/Projets`.
 - **🎧 Exporter** : le morceau devient un MP3 « Mes créations - titre » dans `Musique/Mes créations`, prêt à être mixé dans [Mixxx](https://mixxx.org).
 
 ## Installation (Ubuntu / Debian)
 
 ```bash
-sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm avldrums.lv2-soundfont ffmpeg
+sudo apt install python3-pyqt6 libfluidsynth3 fluid-soundfont-gm avldrums.lv2-soundfont musescore-general-soundfont-lossless ffmpeg
 git clone https://github.com/ThibaultBrun/mon-studio.git
 cd mon-studio
 ./install.sh

@@ -52,7 +52,13 @@ def _new_synth(realtime):
     _lib.fluid_settings_setnum(settings, b"synth.sample-rate", float(SAMPLE_RATE))
     _lib.fluid_settings_setnum(settings, b"synth.gain", 0.5)
     _lib.fluid_settings_setint(settings, b"synth.reverb.active", 1)
-    _lib.fluid_settings_setint(settings, b"synth.chorus.active", 0)
+    _lib.fluid_settings_setint(settings, b"synth.chorus.active", 1)
+    # Une salle un peu plus grande et plus douce que celle par défaut
+    for name, value in [(b"synth.reverb.room-size", 0.62), (b"synth.reverb.damp", 0.4),
+                        (b"synth.reverb.width", 0.9), (b"synth.reverb.level", 0.65)]:
+        _lib.fluid_settings_setnum(settings, name, value)
+    # Ne charge en mémoire que les échantillons des instruments choisis (les grosses banques font des centaines de Mo)
+    _lib.fluid_settings_setint(settings, b"synth.dynamic-sample-loading", 1)
     if realtime:
         _lib.fluid_settings_setstr(settings, b"audio.driver", b"pulseaudio")
         _lib.fluid_settings_setint(settings, b"audio.period-size", 512)
@@ -75,13 +81,14 @@ def sfont_id(synth, path):
 
 
 def setup_channels(synth, channels):
-    """channels : {canal: (banque, programme, volume 0-127, fichier de banque à part ou None)}"""
-    for channel, (bank, program, volume, extra) in channels.items():
+    """channels : {canal: (banque, programme, volume 0-127, fichier de banque à part ou None, (réverbe, chorus, stéréo))}"""
+    for channel, (bank, program, volume, extra, (reverb, chorus, pan)) in channels.items():
         number = sfont_id(synth, extra) if extra else 1
         if number is None:  # banque absente : batterie standard de la banque principale
             number, bank, program = 1, 128, 0
         _lib.fluid_synth_program_select(synth, channel, number, bank, program)
-        _lib.fluid_synth_cc(synth, channel, 7, volume)
+        for control, value in ((7, volume), (91, reverb), (93, chorus), (10, pan)):
+            _lib.fluid_synth_cc(synth, channel, control, value)
 
 
 class Engine:

@@ -21,23 +21,50 @@ LANE_INFO = {  # titre, canal MIDI, couleur
     "accords": ("🎹 Accords", 1, "#3d8bff"),
     "melodie": ("🎵 Mélodie", 2, "#2fbf71"),
 }
-# Instruments : (nom affiché, banque, programme General MIDI[, banque de sons à part])
-# Les vraies batteries AVL (paquet avldrums.lv2-soundfont) sont des kits enregistrés à plusieurs forces de frappe.
+# Instruments : (nom affiché, banque, programme General MIDI, banque de sons à part ou None, correction de volume en dB)
+# Pour chaque instrument, la banque la plus riche en enregistrements (mesurée) :
+# - les vraies batteries AVL (paquet avldrums.lv2-soundfont), enregistrées à plusieurs forces de frappe ;
+# - MuseScore General (paquet musescore-general-soundfont-lossless) : piano, cordes, nappes, chœur, cuivres, guitare, basses ;
+# - FluidR3 : vibraphone, flûte, boîte à musique, saxophone, violon, piano électrique ;
+# - la banque principale (GeneralUser GS) : synthés et orgue.
+# La correction de volume ramène tous les instruments au même niveau (les banques n'ont pas le même volume).
 AVL = "/usr/share/sounds/sf2/"
+MUSESCORE = "/usr/share/sounds/sf2/MuseScore_General_Full.sf2"
+FLUIDR3 = "/usr/share/sounds/sf2/FluidR3_GM.sf2"
 INSTRUMENTS = {
-    "batterie": [("Vraie batterie pop / rock", 0, 0, AVL + "Black_Pearl_4_LV2.sf2"),
-                 ("Vraie batterie rock", 0, 0, AVL + "Red_Zeppelin_4_LV2.sf2"),
-                 ("Vraie batterie jazz", 0, 0, AVL + "Blonde_Bop_HR_LV2.sf2"),
-                 ("Vraie batterie vintage", 0, 0, AVL + "Buskmans_Holiday_LV2.sf2"),
-                 ("Batterie électro", 128, 24), ("Boîte à rythmes 808", 128, 25),
-                 ("Batterie synthé standard", 128, 0), ("Batterie synthé rock", 128, 16)],
-    "basse": [("Basse électrique", 0, 33), ("Basse slap", 0, 36), ("Basse synthé", 0, 38), ("Basse synthé 2", 0, 39),
-              ("Contrebasse", 0, 32)],
-    "accords": [("Piano", 0, 0), ("Piano électrique", 0, 4), ("Nappe douce", 0, 89), ("Cordes", 0, 48),
-                ("Orgue", 0, 16), ("Guitare folk", 0, 25)],
-    "melodie": [("Synthé carré", 0, 80), ("Synthé scie", 0, 81), ("Piano", 0, 0), ("Vibraphone", 0, 11),
-                ("Flûte", 0, 73), ("Boîte à musique", 0, 10), ("Trompette", 0, 56), ("Sifflet", 0, 78)],
+    "batterie": [("Vraie batterie pop / rock", 0, 0, AVL + "Black_Pearl_4_LV2.sf2", 0),
+                 ("Vraie batterie rock", 0, 0, AVL + "Red_Zeppelin_4_LV2.sf2", 0),
+                 ("Vraie batterie jazz", 0, 0, AVL + "Blonde_Bop_HR_LV2.sf2", 0),
+                 ("Vraie batterie vintage", 0, 0, AVL + "Buskmans_Holiday_LV2.sf2", 0),
+                 ("Batterie électro", 128, 24, None, 0), ("Boîte à rythmes 808", 128, 25, None, 0),
+                 ("Batterie synthé standard", 128, 0, None, 0), ("Batterie synthé rock", 128, 16, None, 0)],
+    "basse": [("Basse électrique", 0, 33, MUSESCORE, -4.8),
+              ("Basse slap", 0, 36, MUSESCORE, 0.6),
+              ("Basse synthé", 0, 38, None, -2.8),
+              ("Basse synthé 2", 0, 39, None, -0.7),
+              ("Contrebasse", 0, 32, MUSESCORE, -4.3),
+              ("Basse fretless", 0, 35, MUSESCORE, -4.6)],
+    "accords": [("Piano", 0, 0, MUSESCORE, -0.4),
+                ("Piano électrique", 0, 4, FLUIDR3, -10.0),
+                ("Nappe douce", 0, 89, MUSESCORE, -2.3),
+                ("Cordes", 0, 49, MUSESCORE, -4.0),
+                ("Orgue", 0, 16, None, -5.8),
+                ("Guitare folk", 0, 25, MUSESCORE, 1.9),
+                ("Chœur", 0, 52, MUSESCORE, -4.5),
+                ("Cuivres", 0, 61, MUSESCORE, -7.2)],
+    "melodie": [("Synthé carré", 0, 80, None, 0.0),
+                ("Synthé scie", 0, 81, None, -0.5),
+                ("Piano", 0, 0, MUSESCORE, 2.1),
+                ("Vibraphone", 0, 11, FLUIDR3, 3.9),
+                ("Flûte", 0, 73, FLUIDR3, -6.1),
+                ("Boîte à musique", 0, 10, FLUIDR3, 0.3),
+                ("Trompette", 0, 56, MUSESCORE, -3.8),
+                ("Sifflet", 0, 78, None, -10.3),
+                ("Saxophone", 0, 65, FLUIDR3, -6.1),
+                ("Violon", 0, 40, FLUIDR3, -4.3)],
 }
+# Effets par ligne : (envoi de réverbe, envoi de chorus, position stéréo 0 = gauche, 64 = centre, 127 = droite)
+LANE_FX = {"batterie": (25, 0, 64), "basse": (8, 0, 64), "accords": (55, 25, 50), "melodie": (50, 12, 78)}
 
 # Batterie, de la ligne du bas (0) à celle du haut : (nom, note General MIDI, force)
 DRUM_ROWS = [("Grosse caisse", 36, 115), ("Caisse claire", 38, 105), ("Clap", 39, 100), ("Charleston", 42, 75),

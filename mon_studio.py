@@ -440,6 +440,7 @@ class Studio(QWidget):
         root.addLayout(self.build_top_bar())
         self.help = QLabel()
         self.help.setObjectName("help")
+        self.help.setWordWrap(True)
         root.addWidget(self.help)
         root.addLayout(self.build_timeline())
         root.addLayout(self.build_editor_bar())
@@ -511,6 +512,10 @@ class Studio(QWidget):
             button.setFixedWidth(52)
             bar.addWidget(button)
         bar.addStretch()
+        rows = QVBoxLayout()  # 1re ligne : jouer et régler ; 2e ligne : défis, morceaux et fichiers
+        rows.addLayout(bar)
+        bar = QHBoxLayout()
+        rows.addLayout(bar)
         self.defis_btn = QPushButton("🏆 Défis")
         self.defis_btn.setObjectName("next")
         self.defis_btn.setCheckable(True)
@@ -523,7 +528,8 @@ class Studio(QWidget):
             menu.addAction(name, lambda n=name: self.load_style(n))
         styles.setMenu(menu)
         bar.addWidget(styles)
-        for text, slot in [("🆕 Nouveau", self.new_song), ("📂 Ouvrir", self.open_song), ("💾 Enregistrer", self.save_song)]:
+        bar.addStretch()
+        for text, slot in [("🆕 Nouveau", self.new_song), ("📂 Ouvrir", self.open_song), ("💾 Sauvegarder", self.save_song)]:
             button = QPushButton(text)
             button.setObjectName("light")
             button.clicked.connect(slot)
@@ -531,13 +537,13 @@ class Studio(QWidget):
         export = QPushButton("🎧 Exporter vers Mixxx")
         export.clicked.connect(self.export_song)
         bar.addWidget(export)
-        return bar
+        return rows
 
     def build_timeline(self):
         grid = QVBoxLayout()
         numbers_row = QHBoxLayout()
         spacer = QWidget()
-        spacer.setFixedWidth(400)
+        spacer.setFixedWidth(450)
         numbers_row.addWidget(spacer)
         self.numbers = BarNumbers(self)
         self.numbers.clicked.connect(self.play_from_bar)
@@ -547,7 +553,7 @@ class Studio(QWidget):
         for lane in m.LANES:
             row = QHBoxLayout()
             header = QWidget()
-            header.setFixedWidth(400)
+            header.setFixedWidth(450)
             h = QHBoxLayout(header)
             h.setContentsMargins(0, 0, 0, 0)
             label = QPushButton(m.LANE_INFO[lane][0])
@@ -560,6 +566,7 @@ class Studio(QWidget):
             box = QComboBox()
             box.addItems([instrument[0] for instrument in m.INSTRUMENTS[lane]])
             box.currentIndexChanged.connect(lambda i, l=lane: self.set_instrument(l, i))
+            box.setMinimumWidth(215)  # « Vraie batterie pop / rock » en entier
             self.instrument_boxes[lane] = box
             h.addWidget(box, 1)
             mute = QPushButton("🔇")
@@ -589,8 +596,20 @@ class Studio(QWidget):
         self.editor_title = QLabel()
         self.editor_title.setObjectName("lane")
         bar.addWidget(self.editor_title)
-        self.chips_box = QHBoxLayout()
-        bar.addLayout(self.chips_box)
+        self.chips_widget = QWidget()
+        self.chips_box = QHBoxLayout(self.chips_widget)
+        self.chips_box.setContentsMargins(0, 0, 0, 0)
+        chips_scroll = QScrollArea()
+        chips_scroll.setWidget(self.chips_widget)
+        chips_scroll.setWidgetResizable(True)
+        chips_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        chips_scroll.setFixedHeight(60)
+        chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        bar.addWidget(chips_scroll, 1)
+        rows = QVBoxLayout()
+        rows.addLayout(bar)
+        bar = QHBoxLayout()
+        rows.addLayout(bar)
         new = QPushButton("➕ Nouveau")
         new.clicked.connect(self.new_pattern)
         bar.addWidget(new)
@@ -627,7 +646,7 @@ class Studio(QWidget):
         self.loop_btn.setCheckable(True)
         self.loop_btn.clicked.connect(lambda: self.toggle_play("pattern"))
         bar.addWidget(self.loop_btn)
-        return bar
+        return rows
 
     # ---------- affichage ----------
     def refresh_all(self):
@@ -658,7 +677,10 @@ class Studio(QWidget):
             label.setChecked(l == lane)
         self.editor_title.setText(f"{m.LANE_INFO[lane][0]} :")
         while self.chips_box.count():
-            self.chips_box.takeAt(0).widget().deleteLater()
+            widget = self.chips_box.takeAt(0).widget()
+            if widget:
+                widget.setParent(None)  # disparaît tout de suite de l'écran
+                widget.deleteLater()
         for i, pattern in enumerate(self.project["lanes"][lane]["patterns"]):
             chip = QPushButton(pattern["name"])
             chip.setObjectName("chip")
@@ -667,6 +689,7 @@ class Studio(QWidget):
             chip.setStyleSheet(f"QPushButton {{ border-left: 10px solid {lane_color(lane, i).name()}; }}")
             chip.clicked.connect(lambda _, i=i: self.select_pattern(i))
             self.chips_box.addWidget(chip)
+        self.chips_box.addStretch()
         menu = QMenu(self.templates_btn)
         for t in m.TEMPLATES[lane]:
             menu.addAction(t["name"], lambda n=t["name"]: self.add_template(n))
@@ -922,8 +945,9 @@ class Studio(QWidget):
         for lane in m.LANES:
             data = self.lane_data(lane)
             instruments = m.INSTRUMENTS[lane]
-            _, bank, program, *extra = instruments[min(data["instrument"], len(instruments) - 1)]
-            result[m.LANE_INFO[lane][1]] = (bank, program, data["volume"], extra[0] if extra else None)
+            _, bank, program, soundfont, gain_db = instruments[min(data["instrument"], len(instruments) - 1)]
+            volume = max(1, min(127, round(data["volume"] * 10 ** (gain_db / 40))))  # le volume MIDI suit 40·log10
+            result[m.LANE_INFO[lane][1]] = (bank, program, volume, soundfont, m.LANE_FX[lane])
         return result
 
     def apply_instruments(self):
@@ -1289,7 +1313,10 @@ class Studio(QWidget):
             moteur.render_wav(wav, events, (last_bar + 1) * m.STEPS_PER_BAR, self.project["tempo"], self.channels(),
                               swing=self.project.get("swing", 0), human=self.project.get("humain", m.DEFAULT_HUMAN))
             mp3 = CREATIONS / f"Mes créations - {name}.mp3"
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-af", "loudnorm=I=-14:TP=-1",
+            # « Mastering » léger : compression douce, limiteur, puis volume standard
+            mastering = ("acompressor=threshold=-18dB:ratio=2.5:attack=15:release=200:makeup=2,"
+                         "alimiter=limit=0.95:level=disabled,loudnorm=I=-14:TP=-1")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-af", mastering,
                             "-codec:a", "libmp3lame", "-q:a", "2", "-metadata", "artist=Mes créations",
                             "-metadata", f"title={name}", str(mp3)], check=True)
         QMessageBox.information(self, "Mon Studio", f"🎧 « {name} » est dans tes musiques !\n"
