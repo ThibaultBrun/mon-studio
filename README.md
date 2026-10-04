@@ -46,3 +46,7 @@ cd mon-studio
 - `mon_studio.py` : l'interface PyQt6.
 
 Les sons viennent de la banque General MIDI FluidR3.
+
+## Licence
+
+MIT, voir [LICENSE](LICENSE). La banque de sons FluidR3 GM, installée par le paquet `fluid-soundfont-gm`, a sa propre licence (MIT également).
