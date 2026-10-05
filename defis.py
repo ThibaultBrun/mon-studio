@@ -303,5 +303,5 @@ def load_progress():
 def save_success(defi_id):
     done = load_progress() | {defi_id}
     PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROGRESS_FILE.write_text(json.dumps(sorted(done)))
+    m.write_atomic(PROGRESS_FILE, json.dumps(sorted(done)))
     return done

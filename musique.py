@@ -1,6 +1,9 @@
 """Mon Studio : la musique (gammes, accords, motifs, modèles prêts) et la conversion d'un morceau en notes."""
 import copy
 import json
+import os
+import tempfile
+from pathlib import Path
 
 STEPS_PER_BAR = 16
 BEATS_PER_BAR = 4
@@ -378,11 +381,26 @@ def compile_pattern(project, lane, pattern):
     return events
 
 
+def write_atomic(path, text):
+    """Écrit un fichier d'un seul coup : d'abord un fichier temporaire, puis on le met à la place.
+    Une coupure de courant pendant l'écriture laisse donc l'ancien fichier intact, jamais un fichier à moitié écrit."""
+    path = Path(path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def save(project, path):
-    with open(path, "w") as f:
-        json.dump(project, f, ensure_ascii=False, indent=1)
+    write_atomic(path, json.dumps(project, ensure_ascii=False, indent=1))
 
 
 def load(path):
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)

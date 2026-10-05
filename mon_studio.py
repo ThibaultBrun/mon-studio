@@ -1028,9 +1028,20 @@ class Studio(QWidget):
             self.restore_state(self.redo_stack.pop())
 
     def restore_autosave(self):
+        if not AUTOSAVE.exists():
+            return None
         try:
             return m.load(AUTOSAVE)
         except (OSError, ValueError):
+            # Sauvegarde abîmée : on la met de côté (pour papa) au lieu de l'écraser, et on prévient
+            broken = AUTOSAVE.with_name(f"sauvegarde-abimee-{clock.strftime('%Y%m%d-%H%M%S')}.json")
+            try:
+                AUTOSAVE.replace(broken)
+            except OSError:
+                pass
+            QTimer.singleShot(500, lambda: QMessageBox.warning(
+                self, "Mon Studio", "😕 Je n'ai pas réussi à relire ton dernier morceau.\n"
+                "Je l'ai mis de côté : demande à papa, il pourra peut-être le récupérer."))
             return None
 
     def autosave(self):
