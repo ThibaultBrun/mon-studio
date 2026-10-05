@@ -3,6 +3,7 @@
 sur une ligne de temps. Pensé pour un enfant : gros boutons, notes toujours dans la gamme, modèles prêts."""
 import copy
 import json
+import os
 import re
 import subprocess
 import sys
@@ -21,7 +22,14 @@ import moteur
 import musique as m
 
 def music_dir():
-    """Dossier Musique de l'utilisateur, quelle que soit la langue du système."""
+    """Dossier Musique de l'utilisateur, quelle que soit la langue/plateforme."""
+    if sys.platform.startswith("win") or sys.platform == "darwin":
+        # Windows/macOS : dossier « Music » standard
+        for name in ("Music", "Musique"):
+            p = Path.home() / name
+            if p.exists():
+                return p
+        return Path.home() / "Music"
     try:
         path = subprocess.run(["xdg-user-dir", "MUSIC"], capture_output=True, text=True, check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
@@ -29,8 +37,29 @@ def music_dir():
     return Path(path) if path and Path(path) != Path.home() else Path.home() / "Musique"
 
 
+def data_dir():
+    """Dossier des données de l'appli (sauvegardes auto, défis) selon l'OS."""
+    if sys.platform.startswith("win"):
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        return base / "MonStudio"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "MonStudio"
+    return Path.home() / ".local/share/mon-studio-donnees"
+
+
+def ffmpeg_bin():
+    """ffmpeg bundlé (bin/ à côté de l'appli) sinon celui du PATH."""
+    import shutil
+    exe = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
+    local = Path(__file__).resolve().parent / "bin" / exe
+    if local.exists():
+        return str(local)
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
 CREATIONS = music_dir() / "Mes créations"
-DATA = Path.home() / ".local/share/mon-studio-donnees"
+DATA = data_dir()
+FFMPEG = ffmpeg_bin()
 AUTOSAVE = DATA / "sauvegarde-auto.json"
 UNDO_LIMIT = 80
 UNDO_GROUP_SECONDS = 0.6  # les clics rapprochés (glisser dans la grille) s'annulent d'un coup
@@ -1316,7 +1345,7 @@ class Studio(QWidget):
             # « Mastering » léger : compression douce, limiteur, puis volume standard
             mastering = ("acompressor=threshold=-18dB:ratio=2.5:attack=15:release=200:makeup=2,"
                          "alimiter=limit=0.95:level=disabled,loudnorm=I=-14:TP=-1")
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-af", mastering,
+            subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(wav), "-af", mastering,
                             "-codec:a", "libmp3lame", "-q:a", "2", "-metadata", "artist=Mes créations",
                             "-metadata", f"title={name}", str(mp3)], check=True)
         QMessageBox.information(self, "Mon Studio", f"🎧 « {name} » est dans tes musiques !\n"

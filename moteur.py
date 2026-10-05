@@ -1,17 +1,64 @@
 """Mon Studio : le moteur audio (FluidSynth), pour jouer en direct et exporter en WAV."""
 import ctypes
+import ctypes.util
+import os
 import random
+import sys
 import wave
 
 from pathlib import Path
 
-# Banque de sons : GeneralUser GS si elle est installée (bien meilleure), sinon FluidR3
-SOUNDFONTS = [Path("/usr/share/sounds/sf2/GeneralUser-GS.sf2"), Path.home() / ".local/share/sounds/sf2/GeneralUser-GS.sf2",
-              Path("/usr/share/sounds/sf2/FluidR3_GM.sf2")]
+_HERE = Path(__file__).resolve().parent
+
+# Banque de sons : d'abord une banque locale livrée avec l'appli (soundfonts/ à côté du code,
+# pratique pour un bundle Windows/macOS), puis les emplacements système Linux, sinon FluidR3.
+SOUNDFONTS = [
+    _HERE / "soundfonts" / "GeneralUser-GS.sf2",            # bundle (toutes plateformes)
+    Path("/usr/share/sounds/sf2/GeneralUser-GS.sf2"),       # Linux (apt)
+    Path.home() / ".local/share/sounds/sf2/GeneralUser-GS.sf2",
+    Path("/usr/share/sounds/sf2/FluidR3_GM.sf2"),           # secours Linux
+]
+if os.environ.get("APPDATA"):  # Windows : banque installée dans %APPDATA%
+    SOUNDFONTS.insert(-1, Path(os.environ["APPDATA"]) / "MonStudio" / "GeneralUser-GS.sf2")
+# Sans banque trouvée, on garde le secours (comme avant) pour que l'erreur soit claire
 SOUNDFONT = str(next((p for p in SOUNDFONTS if p.exists()), SOUNDFONTS[-1])).encode()
 SAMPLE_RATE = 44100
 
-_lib = ctypes.CDLL("libfluidsynth.so.3")
+
+def _load_fluidsynth():
+    """Charge la lib FluidSynth selon l'OS (Linux .so.3 / Windows .dll / macOS .dylib)."""
+    candidates = []
+    if sys.platform.startswith("win"):
+        # Permet de livrer les DLL FluidSynth dans un dossier bin/ à côté de l'appli
+        for sub in ("bin", "fluidsynth", "."):
+            d = _HERE / sub
+            if d.is_dir():
+                try:
+                    os.add_dll_directory(str(d))
+                except (OSError, AttributeError):
+                    pass
+        candidates = ["libfluidsynth-3.dll", "libfluidsynth-2.dll", "fluidsynth.dll", "libfluidsynth.dll"]
+    elif sys.platform == "darwin":
+        candidates = ["libfluidsynth.3.dylib", "libfluidsynth.dylib"]
+    else:
+        candidates = ["libfluidsynth.so.3", "libfluidsynth.so.2", "libfluidsynth.so"]
+    found = ctypes.util.find_library("fluidsynth")
+    if found:
+        candidates.append(found)
+    last = None
+    for name in candidates:
+        try:
+            return ctypes.CDLL(name)
+        except OSError as exc:
+            last = exc
+    raise OSError(
+        "FluidSynth introuvable. Linux : « sudo apt install libfluidsynth3 ». "
+        "Windows : installe FluidSynth (ou place libfluidsynth-3.dll à côté de l'appli) et "
+        "vérifie qu'il est dans le PATH. Détail : %s" % last
+    )
+
+
+_lib = _load_fluidsynth()
 _p = ctypes.c_void_p
 for name, restype, argtypes in [
     ("new_fluid_settings", _p, []),
@@ -60,7 +107,11 @@ def _new_synth(realtime):
     # Ne charge en mémoire que les échantillons des instruments choisis (les grosses banques font des centaines de Mo)
     _lib.fluid_settings_setint(settings, b"synth.dynamic-sample-loading", 1)
     if realtime:
-        _lib.fluid_settings_setstr(settings, b"audio.driver", b"pulseaudio")
+        # Driver audio selon l'OS : Windows = wasapi, macOS = coreaudio, Linux = pulseaudio.
+        # Un autre (dsound, alsa…) peut être choisi avec la variable MONSTUDIO_AUDIO_DRIVER.
+        default = "wasapi" if sys.platform.startswith("win") else "coreaudio" if sys.platform == "darwin" else "pulseaudio"
+        driver = os.environ.get("MONSTUDIO_AUDIO_DRIVER") or default
+        _lib.fluid_settings_setstr(settings, b"audio.driver", driver.encode())
         _lib.fluid_settings_setint(settings, b"audio.period-size", 512)
     synth = _lib.new_fluid_synth(settings)
     sfont = _lib.fluid_synth_sfload(synth, SOUNDFONT, 1)
