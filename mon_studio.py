@@ -1318,16 +1318,48 @@ class Studio(QWidget):
     def open_song(self):
         PROJECTS.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getOpenFileName(self, "Ouvrir un morceau", str(PROJECTS), "Morceaux (*.json)")
-        if path:
+        if not path:
+            return
+        previous, previous_path = self.project, self.save_path
+        try:
             self.load_project(m.load(path), Path(path))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+            # Fichier abîmé ou pas un morceau : on garde le morceau en cours
+            self.load_project(previous, previous_path)
+            QMessageBox.warning(self, "Mon Studio", f"😕 Je n'arrive pas à lire « {Path(path).name} ».\n"
+                                                    "Ce fichier est abîmé ou ce n'est pas un morceau de Mon Studio.")
 
-    def ask_name(self, question):
+    def ask_name(self, question, mp3=False):
+        """Demande le nom du morceau. Si un autre morceau porte déjà ce nom, on demande avant de l'écraser."""
         name, ok = QInputDialog.getText(self, "Mon Studio", question, text=self.project.get("name", "Mon morceau"))
         name = re.sub(r'[/\\:*?"<>|]', " ", name).strip()
-        if ok and name:
-            self.project["name"] = name
-            return name
-        return None
+        if not ok or not name:
+            return None
+        if self.name_taken(name, mp3):
+            box = QMessageBox(self)
+            box.setWindowTitle("Mon Studio")
+            box.setText(f"Tu as déjà un morceau qui s'appelle « {name} ».")
+            replace = box.addButton("🔁 Le remplacer", QMessageBox.ButtonRole.DestructiveRole)
+            keep = box.addButton("➕ Garder les deux", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(keep)
+            box.exec()
+            if box.clickedButton() is keep:
+                base, number = name, 2
+                while self.name_taken(f"{base} ({number})", mp3):
+                    number += 1
+                name = f"{base} ({number})"
+            elif box.clickedButton() is not replace:
+                return None
+        self.project["name"] = name
+        return name
+
+    def name_taken(self, name, mp3=False):
+        """Un autre morceau (pas celui qu'on est en train d'enregistrer) porte déjà ce nom ?"""
+        project = PROJECTS / f"{name}.json"
+        if project.exists() and project != self.save_path:
+            return True
+        return mp3 and (CREATIONS / f"Mes créations - {name}.mp3").exists() and project != self.save_path
 
     def save_song(self):
         name = self.ask_name("Comment s'appelle ton morceau ?")
@@ -1339,13 +1371,14 @@ class Studio(QWidget):
         QMessageBox.information(self, "Mon Studio", f"💾 « {name} » est enregistré !")
 
     def export_song(self):
-        name = self.ask_name("Comment s'appelle ton morceau ? Il ira dans Mixxx !")
+        name = self.ask_name("Comment s'appelle ton morceau ? Il ira dans Mixxx !", mp3=True)
         if not name:
             return
         self.stop()
         CREATIONS.mkdir(parents=True, exist_ok=True)
         PROJECTS.mkdir(parents=True, exist_ok=True)
-        m.save(self.project, PROJECTS / f"{name}.json")
+        self.save_path = PROJECTS / f"{name}.json"
+        m.save(self.project, self.save_path)
         events = m.compile_song(self.project)
         last_bar = max((b for lane in m.LANES for b, c in enumerate(self.lane_data(lane)["song"]) if c), default=0)
         with tempfile.TemporaryDirectory() as tmp:
