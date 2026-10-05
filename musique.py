@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import random
 import tempfile
 from pathlib import Path
 
@@ -283,6 +284,63 @@ def accented(velocity, accent):
 def swing_offset(step, swing, step_ms):
     """Retard (ms) d'un pas : le swing décale les doubles croches « faibles » (pas impairs)."""
     return (swing / 100) * step_ms * 0.66 if step % 2 else 0.0
+
+
+# --- Jouer les notes : une seule recette pour la lecture en direct ET l'export, pour qu'ils sonnent pareil ---
+HUMAN_JITTER_MS = 15  # décalage maximum d'une note à 100 % de « humain »
+
+
+def humanize(velocity, amount):
+    """Petite variation de force (amount en %), comme un vrai musicien qui ne tape jamais exactement pareil."""
+    spread = round(14 * amount / 100)
+    return max(1, min(127, velocity + random.randint(-spread, spread)))
+
+
+def jitter_ms(amount):
+    """Petit décalage aléatoire dans le temps (amount en %) : jamais pile sur la grille, comme un humain."""
+    return random.uniform(-HUMAN_JITTER_MS, HUMAN_JITTER_MS) * amount / 100
+
+
+def next_hits(events, loop_steps=None):
+    """{(pas, canal, note): nombre de pas jusqu'à la frappe suivante de la même note}.
+    En boucle (loop_steps), la dernière frappe est suivie par la première du tour suivant."""
+    steps_of = {}
+    for step in sorted(events):
+        for channel, note, _velocity, _length in events[step]:
+            steps_of.setdefault((channel, note), []).append(step)
+    gaps = {}
+    for (channel, note), steps in steps_of.items():
+        for i, step in enumerate(steps):
+            following = steps[i + 1] if i + 1 < len(steps) else (steps[0] + loop_steps if loop_steps else None)
+            if following is not None and following > step:
+                gaps[(step, channel, note)] = following - step
+    return gaps
+
+
+def perform(step, hit, gap, swing, step_ms, human):
+    """Comment jouer une frappe : (décalage en ms par rapport à la grille, force, durée en ms).
+
+    La note s'arrête avant la frappe suivante de la même note (gap, en pas) : sinon, avec le swing ou les
+    décalages « humains », son arrêt tomberait après le coup suivant et le couperait (charleston haché)."""
+    _channel, _note, velocity, length = hit
+    offset = swing_offset(step, swing, step_ms) + jitter_ms(human)
+    duration = length * step_ms * 0.95
+    if gap:
+        room = (gap * step_ms + swing_offset(step + gap, swing, step_ms) - swing_offset(step, swing, step_ms)
+                - 2 * HUMAN_JITTER_MS * human / 100 - 1)
+        duration = min(duration, room)
+    return offset, humanize(velocity, human), max(1.0, duration)
+
+
+def performance(events, step_ms, swing, human):
+    """Toutes les notes d'un morceau, prêtes à jouer : [(début en ms, canal, note, force, durée en ms)]."""
+    gaps = next_hits(events)
+    notes = []
+    for step in sorted(events):
+        for hit in events[step]:
+            offset, velocity, duration = perform(step, hit, gaps.get((step, hit[0], hit[1])), swing, step_ms, human)
+            notes.append((max(0.0, step * step_ms + offset), hit[0], hit[1], velocity, duration))
+    return notes
 
 
 def runs(cells, total_steps):
