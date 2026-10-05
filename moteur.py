@@ -2,7 +2,6 @@
 import ctypes
 import ctypes.util
 import os
-import random
 import sys
 import wave
 
@@ -148,6 +147,10 @@ class Engine:
     def __init__(self):
         self.settings, self.synth = _new_synth(realtime=True)
         self.driver = _lib.new_fluid_audio_driver(self.settings, self.synth)
+        if not self.driver and sys.platform.startswith("linux"):
+            # Pas de PulseAudio/PipeWire (système ALSA pur) : on passe directement par ALSA
+            _lib.fluid_settings_setstr(self.settings, b"audio.driver", b"alsa")
+            self.driver = _lib.new_fluid_audio_driver(self.settings, self.synth)
         self.sequencer = _lib.new_fluid_sequencer2(0)
         self.dest = _lib.fluid_sequencer_register_fluidsynth(self.sequencer, self.synth)
 
@@ -190,32 +193,31 @@ class Engine:
         _lib.delete_fluid_settings(self.settings)
 
 
-def humanize(velocity, amount):
-    """Petite variation de force (amount en %), comme un vrai musicien qui ne tape jamais exactement pareil."""
-    spread = round(14 * amount / 100)
-    return max(1, min(127, velocity + random.randint(-spread, spread)))
+def render_wav(path, notes, end_ms, channels, tail_seconds=2.5, progress=None):
+    """Fabrique le fichier WAV du morceau.
 
-
-def jitter_ms(amount):
-    """Petit décalage aléatoire dans le temps (amount en %) : jamais pile sur la grille, comme un humain."""
-    return random.uniform(-15, 15) * amount / 100
-
-
-def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5, swing=0, human=0):
-    """Fabrique le fichier WAV du morceau. events : {pas: [(canal, note, force, durée en pas)]}."""
+    notes : [(début en ms, canal, note, force, durée en ms)], déjà « jouées » (swing, humain) par
+    musique.performance, comme en lecture directe. progress(fraction) est appelé pendant le rendu."""
     settings, synth = _new_synth(realtime=False)
+    try:
+        _render(synth, channels, path, notes, end_ms, tail_seconds, progress)
+    finally:  # même si le rendu échoue, on libère le synthé
+        for key in [k for k in _loaded if k[0] == synth]:
+            del _loaded[key]
+        _lib.delete_fluid_synth(synth)
+        _lib.delete_fluid_settings(settings)
+
+
+def _render(synth, channels, path, notes, end_ms, tail_seconds, progress):
     setup_channels(synth, channels)
-    step_frames = SAMPLE_RATE * 60 / tempo / 4
+    frames = SAMPLE_RATE / 1000
     timeline = []  # (image, 1 = début / 0 = fin, canal, note, force)
-    for step, notes in events.items():
-        delay = (swing / 100) * step_frames * 0.66 if step % 2 else 0
-        for channel, note, velocity, length in notes:
-            start = max(0, int(step * step_frames + delay + jitter_ms(human) * SAMPLE_RATE / 1000))
-            velocity = humanize(velocity, human)
-            timeline.append((start, 1, channel, note, velocity))
-            timeline.append((start + int(length * step_frames * 0.95), 0, channel, note, 0))
+    for start_ms, channel, note, velocity, duration_ms in notes:
+        start = int(start_ms * frames)
+        timeline.append((start, 1, channel, note, velocity))
+        timeline.append((start + max(1, int(duration_ms * frames)), 0, channel, note, 0))
     timeline.sort(key=lambda e: (e[0], e[1]))  # les fins avant les débuts au même instant
-    end_frame = int(total_steps * step_frames + tail_seconds * SAMPLE_RATE)
+    end_frame = int(end_ms * frames + tail_seconds * SAMPLE_RATE)
 
     with wave.open(str(path), "wb") as out:
         out.setnchannels(2)
@@ -231,6 +233,8 @@ def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5, swi
                 _lib.fluid_synth_write_s16(synth, count, buffer, 0, 2, buffer, 1, 2)
                 out.writeframes(bytes(buffer))
                 position += count
+                if progress and position % (SAMPLE_RATE // 2) < 4096:
+                    progress(min(1.0, position / max(1, end_frame)))
 
         for frame, is_on, channel, note, velocity in timeline:
             write_until(frame)
@@ -239,7 +243,3 @@ def render_wav(path, events, total_steps, tempo, channels, tail_seconds=2.5, swi
             else:
                 _lib.fluid_synth_noteoff(synth, channel, note)
         write_until(end_frame)
-    for key in [k for k in _loaded if k[0] == synth]:
-        del _loaded[key]
-    _lib.delete_fluid_synth(synth)
-    _lib.delete_fluid_settings(settings)

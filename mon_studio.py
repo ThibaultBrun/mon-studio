@@ -11,10 +11,10 @@ import tempfile
 import time as clock
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
-                             QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
+                             QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
                              QVBoxLayout, QWidget)
 
 import defis
@@ -431,6 +431,37 @@ class DefiPanel(QFrame):
 
 
 # --- Fenêtre principale ---
+class Exporter(QThread):
+    """Fabrique le MP3 d'un morceau sans bloquer la fenêtre : rendu WAV, puis « mastering » léger avec ffmpeg."""
+    progress = pyqtSignal(int)
+    done = pyqtSignal(str, str)  # nom du morceau, message d'erreur ("" si tout va bien)
+
+    def __init__(self, name, notes, end_ms, channels, parent):
+        super().__init__(parent)
+        self.name, self.notes, self.end_ms, self.channels = name, notes, end_ms, channels
+
+    def run(self):
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                wav = Path(tmp) / "morceau.wav"
+                moteur.render_wav(wav, self.notes, self.end_ms, self.channels,
+                                  progress=lambda fraction: self.progress.emit(int(fraction * 85)))
+                self.progress.emit(90)
+                mp3 = CREATIONS / f"Mes créations - {self.name}.mp3"
+                # « Mastering » léger : compression douce, limiteur, puis volume standard
+                mastering = ("acompressor=threshold=-18dB:ratio=2.5:attack=15:release=200:makeup=2,"
+                             "alimiter=limit=0.95:level=disabled,loudnorm=I=-14:TP=-1")
+                result = subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(wav), "-af", mastering,
+                                         "-codec:a", "libmp3lame", "-q:a", "2", "-metadata", "artist=Mes créations",
+                                         "-metadata", f"title={self.name}", str(mp3)], capture_output=True, text=True)
+                if result.returncode:
+                    raise RuntimeError(f"ffmpeg : {result.stderr.strip()[-200:] or result.returncode}")
+            self.progress.emit(100)
+            self.done.emit(self.name, "")
+        except Exception as error:  # le morceau est déjà enregistré : on prévient sans planter
+            self.done.emit(self.name, str(error) or type(error).__name__)
+
+
 class Studio(QWidget):
     def __init__(self):
         super().__init__()
@@ -450,6 +481,7 @@ class Studio(QWidget):
         self.playing = None      # None, "song" ou "pattern"
         self.events = {}
         self.loop_steps = 0
+        self.gaps = {}
         self.dirty = True
         self.start_tick = 0
         self.next_step = 0
@@ -1028,9 +1060,20 @@ class Studio(QWidget):
             self.restore_state(self.redo_stack.pop())
 
     def restore_autosave(self):
+        if not AUTOSAVE.exists():
+            return None
         try:
             return m.load(AUTOSAVE)
         except (OSError, ValueError):
+            # Sauvegarde abîmée : on la met de côté (pour papa) au lieu de l'écraser, et on prévient
+            broken = AUTOSAVE.with_name(f"sauvegarde-abimee-{clock.strftime('%Y%m%d-%H%M%S')}.json")
+            try:
+                AUTOSAVE.replace(broken)
+            except OSError:
+                pass
+            QTimer.singleShot(500, lambda: QMessageBox.warning(
+                self, "Mon Studio", "😕 Je n'ai pas réussi à relire ton dernier morceau.\n"
+                "Je l'ai mis de côté : demande à papa, il pourra peut-être le récupérer."))
             return None
 
     def autosave(self):
@@ -1071,6 +1114,7 @@ class Studio(QWidget):
         else:
             self.events = m.compile_song(self.project)
             self.loop_steps = m.SONG_BARS * m.STEPS_PER_BAR
+        self.gaps = m.next_hits(self.events, self.loop_steps)
         self.dirty = False
 
     def toggle_play(self, mode, from_step=0, source=None, name=None):
@@ -1110,13 +1154,14 @@ class Studio(QWidget):
             self.compile()
         now = self.engine.now()
         step_ms = self.step_ms()
+        swing, human = self.project.get("swing", 0), self.project.get("humain", m.DEFAULT_HUMAN)
         while self.start_tick + self.next_step * step_ms < now + LOOKAHEAD_MS:
             time = self.start_tick + self.next_step * step_ms
-            delay = m.swing_offset(self.next_step, self.project.get("swing", 0), step_ms)
-            human = self.project.get("humain", m.DEFAULT_HUMAN)
-            for channel, note, velocity, length in self.events.get(self.next_step % self.loop_steps, []):
-                self.engine.note_at(max(self.engine.now(), time + delay + moteur.jitter_ms(human)), channel, note,
-                                    moteur.humanize(velocity, human), length * step_ms * 0.95)
+            step = self.next_step % self.loop_steps
+            for hit in self.events.get(step, []):
+                gap = self.gaps.get((step, hit[0], hit[1]))
+                offset, velocity, duration = m.perform(self.next_step, hit, gap, swing, step_ms, human)
+                self.engine.note_at(max(self.engine.now(), time + offset), hit[0], hit[1], velocity, duration)
             self.next_step += 1
         self.update_views()
 
@@ -1307,16 +1352,48 @@ class Studio(QWidget):
     def open_song(self):
         PROJECTS.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getOpenFileName(self, "Ouvrir un morceau", str(PROJECTS), "Morceaux (*.json)")
-        if path:
+        if not path:
+            return
+        previous, previous_path = self.project, self.save_path
+        try:
             self.load_project(m.load(path), Path(path))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+            # Fichier abîmé ou pas un morceau : on garde le morceau en cours
+            self.load_project(previous, previous_path)
+            QMessageBox.warning(self, "Mon Studio", f"😕 Je n'arrive pas à lire « {Path(path).name} ».\n"
+                                                    "Ce fichier est abîmé ou ce n'est pas un morceau de Mon Studio.")
 
-    def ask_name(self, question):
+    def ask_name(self, question, mp3=False):
+        """Demande le nom du morceau. Si un autre morceau porte déjà ce nom, on demande avant de l'écraser."""
         name, ok = QInputDialog.getText(self, "Mon Studio", question, text=self.project.get("name", "Mon morceau"))
         name = re.sub(r'[/\\:*?"<>|]', " ", name).strip()
-        if ok and name:
-            self.project["name"] = name
-            return name
-        return None
+        if not ok or not name:
+            return None
+        if self.name_taken(name, mp3):
+            box = QMessageBox(self)
+            box.setWindowTitle("Mon Studio")
+            box.setText(f"Tu as déjà un morceau qui s'appelle « {name} ».")
+            replace = box.addButton("🔁 Le remplacer", QMessageBox.ButtonRole.DestructiveRole)
+            keep = box.addButton("➕ Garder les deux", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Annuler", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(keep)
+            box.exec()
+            if box.clickedButton() is keep:
+                base, number = name, 2
+                while self.name_taken(f"{base} ({number})", mp3):
+                    number += 1
+                name = f"{base} ({number})"
+            elif box.clickedButton() is not replace:
+                return None
+        self.project["name"] = name
+        return name
+
+    def name_taken(self, name, mp3=False):
+        """Un autre morceau (pas celui qu'on est en train d'enregistrer) porte déjà ce nom ?"""
+        project = PROJECTS / f"{name}.json"
+        if project.exists() and project != self.save_path:
+            return True
+        return mp3 and (CREATIONS / f"Mes créations - {name}.mp3").exists() and project != self.save_path
 
     def save_song(self):
         name = self.ask_name("Comment s'appelle ton morceau ?")
@@ -1328,30 +1405,43 @@ class Studio(QWidget):
         QMessageBox.information(self, "Mon Studio", f"💾 « {name} » est enregistré !")
 
     def export_song(self):
-        name = self.ask_name("Comment s'appelle ton morceau ? Il ira dans Mixxx !")
-        if not name:
+        name = self.ask_name("Comment s'appelle ton morceau ? Il ira dans Mixxx !", mp3=True)
+        if not name or getattr(self, "exporter", None):
             return
         self.stop()
         CREATIONS.mkdir(parents=True, exist_ok=True)
         PROJECTS.mkdir(parents=True, exist_ok=True)
-        m.save(self.project, PROJECTS / f"{name}.json")
-        events = m.compile_song(self.project)
+        self.save_path = PROJECTS / f"{name}.json"
+        m.save(self.project, self.save_path)
+        step_ms = self.step_ms()
         last_bar = max((b for lane in m.LANES for b, c in enumerate(self.lane_data(lane)["song"]) if c), default=0)
-        with tempfile.TemporaryDirectory() as tmp:
-            wav = Path(tmp) / "morceau.wav"
-            moteur.render_wav(wav, events, (last_bar + 1) * m.STEPS_PER_BAR, self.project["tempo"], self.channels(),
-                              swing=self.project.get("swing", 0), human=self.project.get("humain", m.DEFAULT_HUMAN))
-            mp3 = CREATIONS / f"Mes créations - {name}.mp3"
-            # « Mastering » léger : compression douce, limiteur, puis volume standard
-            mastering = ("acompressor=threshold=-18dB:ratio=2.5:attack=15:release=200:makeup=2,"
-                         "alimiter=limit=0.95:level=disabled,loudnorm=I=-14:TP=-1")
-            subprocess.run([FFMPEG, "-v", "error", "-y", "-i", str(wav), "-af", mastering,
-                            "-codec:a", "libmp3lame", "-q:a", "2", "-metadata", "artist=Mes créations",
-                            "-metadata", f"title={name}", str(mp3)], check=True)
-        QMessageBox.information(self, "Mon Studio", f"🎧 « {name} » est dans tes musiques !\n"
-                                                    "Ouvre Mixxx : il est dans le dossier « Mes créations ».")
+        notes = m.performance(m.compile_song(self.project), step_ms, self.project.get("swing", 0),
+                              self.project.get("humain", m.DEFAULT_HUMAN))
+        # Le rendu prend du temps : il se fait à côté, pendant que la fenêtre affiche où on en est
+        self.exporter = Exporter(name, notes, (last_bar + 1) * m.STEPS_PER_BAR * step_ms, self.channels(), self)
+        self.export_dialog = QProgressDialog("🎧 Je fabrique ton morceau…", None, 0, 100, self)
+        self.export_dialog.setWindowTitle("Mon Studio")
+        self.export_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.export_dialog.setMinimumDuration(0)
+        self.export_dialog.setValue(0)
+        self.exporter.progress.connect(self.export_dialog.setValue)
+        self.exporter.done.connect(self.export_done)
+        self.exporter.start()
+
+    def export_done(self, name, error):
+        self.export_dialog.close()
+        self.exporter.wait()
+        self.exporter = None
+        if error:
+            QMessageBox.warning(self, "Mon Studio", "😕 Je n'ai pas réussi à fabriquer ton morceau.\n"
+                                                    f"Ton travail est bien enregistré. Demande à papa.\n\n({error})")
+        else:
+            QMessageBox.information(self, "Mon Studio", f"🎧 « {name} » est dans tes musiques !\n"
+                                                        "Ouvre Mixxx : il est dans le dossier « Mes créations ».")
 
     def closeEvent(self, event):
+        if getattr(self, "exporter", None):
+            self.exporter.wait()
         self.autosave()
         self.timer.stop()
         self.engine.close()
