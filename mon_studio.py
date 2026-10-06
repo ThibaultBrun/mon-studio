@@ -160,6 +160,12 @@ def apply_light_theme(app):
     app.setPalette(app.style().standardPalette())
 
 
+def lane_channels(lane):
+    """Les canaux du synthé d'une ligne : la mélodie a aussi celui de ses échos."""
+    channel = m.LANE_INFO[lane][1]
+    return [channel, m.ECHO_CHANNEL] if lane == "melodie" else [channel]
+
+
 # --- Ligne de temps (une rangée par instrument) ---
 class TimelineRow(QWidget):
     clicked = pyqtSignal(str, int, bool)  # ligne, mesure, clic droit
@@ -447,16 +453,17 @@ class Exporter(QThread):
     progress = pyqtSignal(int)
     done = pyqtSignal(str, str)  # nom du morceau, message d'erreur ("" si tout va bien)
 
-    def __init__(self, name, notes, end_ms, channels, parent):
+    def __init__(self, name, notes, end_ms, channels, parent, controls=()):
         super().__init__(parent)
         self.name, self.notes, self.end_ms, self.channels = name, notes, end_ms, channels
+        self.controls = controls
 
     def run(self):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 wav = Path(tmp) / "morceau.wav"
                 moteur.render_wav(wav, self.notes, self.end_ms, self.channels,
-                                  progress=lambda fraction: self.progress.emit(int(fraction * 85)))
+                                  progress=lambda fraction: self.progress.emit(int(fraction * 85)), controls=self.controls)
                 self.progress.emit(90)
                 mp3 = CREATIONS / f"Mes créations - {self.name}.mp3"
                 # « Mastering » léger : compression douce, limiteur, puis volume standard
@@ -614,6 +621,7 @@ class Studio(QWidget):
         self.mixer_btn.setToolTip("Règle la place de chaque instrument à gauche ou à droite, et son écho")
         self.mixer_btn.clicked.connect(self.show_mixer)
         bar.addWidget(self.mixer_btn)
+        bar.addLayout(self.build_effects())
         bar.addStretch()
         for text, slot in [("🆕 Nouveau", self.new_song), ("📂 Ouvrir", self.open_song), ("💾 Sauvegarder", self.save_song)]:
             button = QPushButton(text)
@@ -624,6 +632,24 @@ class Studio(QWidget):
         export.clicked.connect(self.export_song)
         bar.addWidget(export)
         return rows
+
+    def build_effects(self):
+        """Les effets « waouh » : un gros interrupteur par effet, rien à régler."""
+        box = QHBoxLayout()
+        box.setSpacing(6)
+        box.addWidget(QLabel("  Effets :"))
+        self.effect_buttons = {}
+        for name, (text, tip) in m.EFFECTS.items():
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setStyleSheet("QPushButton { background: #f3ecff; color: #4a2a80; border: 2px solid #9c5cf2; }"
+                                 "QPushButton:hover { background: #e4d6ff; }"
+                                 "QPushButton:checked { background: #9c5cf2; color: white; }")
+            button.clicked.connect(lambda checked, n=name: self.set_effect(n, checked))
+            self.effect_buttons[name] = button
+            box.addWidget(button)
+        return box
 
     def build_timeline(self):
         """La ligne de temps, avec devant chaque ligne son nom, son instrument et sa bande de table de mixage :
@@ -793,6 +819,8 @@ class Studio(QWidget):
         self.human_label.setText(f"Humain {self.project.get('humain', m.DEFAULT_HUMAN)} %")
         self.swing_label.setText(f"Swing {self.project.get('swing', 0)} %")
         self.update_undo_buttons()
+        for name, button in self.effect_buttons.items():
+            button.setChecked(bool(m.effects_of(self.project).get(name)))
         for lane in m.LANES:
             data = self.project["lanes"][lane]
             mix = m.mixer_defaults(lane)
@@ -1080,7 +1108,8 @@ class Studio(QWidget):
     def mix_lane(self, lane):
         channel = m.LANE_INFO[lane][1]
         if channel not in self.silencing:  # une ligne en train d'être coupée garde le silence
-            self.engine.mix(channel, *m.lane_mix(self.project, lane))
+            for c in lane_channels(lane):  # les échos de la mélodie suivent ses réglages
+                self.engine.mix(c, *m.lane_mix(self.project, lane))
 
     def set_human(self, value):
         self.project["humain"] = value
@@ -1090,6 +1119,19 @@ class Studio(QWidget):
     def set_swing(self, value):
         self.project["swing"] = value
         self.swing_label.setText(f"Swing {value} %")
+        self.changed()
+
+    def set_effect(self, name, on):
+        effects = dict(m.effects_of(self.project))
+        if on:
+            effects[name] = True
+        else:
+            effects.pop(name, None)
+            moteur.reset_effects(self.engine.synth, range(16))  # pas de son resté étouffé
+        if effects:
+            self.project["effets"] = effects
+        else:
+            self.project.pop("effets", None)  # comme un ancien morceau : rien n'a changé
         self.changed()
 
     def set_muted(self, lane, muted):
@@ -1120,31 +1162,35 @@ class Studio(QWidget):
             if lane in before and lane not in after:
                 self.silence_count += 1
                 self.silencing[channel] = (self.silence_count, self.next_step)
-                self.engine.silence(channel)
+                for c in lane_channels(lane):  # la mélodie emporte ses échos
+                    self.engine.silence(c)
                 QTimer.singleShot(LOOKAHEAD_MS + 60, lambda l=lane, c=channel, n=self.silence_count: self.end_silence(l, c, n))
             elif lane in after and lane not in before:
                 first = math.floor((self.engine.now() - self.start_tick) / self.step_ms()) + 1
                 if channel in self.silencing:  # coupée il y a moins de 200 ms : ses notes déjà programmées rejouent
                     first = max(first, self.silencing.pop(channel)[1])
                     self.mix_lane(lane)
-                self.schedule_steps(range(first, self.next_step), channel)
+                self.schedule_steps(range(first, self.next_step), set(lane_channels(lane)))
 
     def end_silence(self, lane, channel, number):
         """Les notes programmées avant la coupure sont passées : on remet le canal en état de jouer
         (pour le jeu au clavier ou quand la ligne reviendra)."""
         if self.silencing.get(channel, (None,))[0] != number:
             return
-        self.engine.silence(channel)
+        for c in lane_channels(lane):
+            self.engine.silence(c)
         del self.silencing[channel]
         self.mix_lane(lane)
 
     def channels(self):
-        return m.channels(self.project)
+        return m.with_echo_channel(m.channels(self.project))
 
     def apply_instruments(self):
         self.engine.setup(self.channels())
-        for channel in self.silencing:
-            self.engine.silence(channel)
+        for lane in m.LANES:
+            if m.LANE_INFO[lane][1] in self.silencing:
+                for c in lane_channels(lane):
+                    self.engine.silence(c)
 
     # ---------- lecture ----------
     def changed(self):
@@ -1293,19 +1339,26 @@ class Studio(QWidget):
             self.next_step += 1
         self.update_views()
 
-    def schedule_steps(self, steps, channel=None):
-        """Programme les notes de ces pas (comptés depuis le début de la lecture), éventuellement d'un seul canal."""
+    def schedule_steps(self, steps, channels=None):
+        """Programme les notes de ces pas (comptés depuis le début de la lecture), éventuellement de quelques canaux
+        seulement (une ligne qui revient : pas de réglages d'effets, ceux des autres lignes sont déjà programmés)."""
         step_ms = self.step_ms()
         swing, human = self.project.get("swing", 0), self.project.get("humain", m.DEFAULT_HUMAN)
+        effects = m.effects_of(self.project)
         for absolute in steps:
             time = self.start_tick + absolute * step_ms
             step = absolute % self.loop_steps
+            controls = m.step_controls(step, effects) if self.playing == "song" and channels is None else []
             for hit in self.events.get(step, []):
-                if channel is not None and hit[0] != channel:
+                if channels is not None and hit[0] not in channels:
                     continue
                 gap = self.gaps.get((step, hit[0], hit[1]))
                 offset, velocity, duration = m.perform(absolute, hit, gap, swing, step_ms, human)
                 self.engine.note_at(max(self.engine.now(), time + offset), hit[0], hit[1], velocity, duration)
+                if channels is None:
+                    controls += [(offset + delay, *rest) for delay, *rest in m.hit_controls(hit, gap, step_ms, effects)]
+            for delay, channel, control, value in controls:  # effets (pompe, filtre) : même recette qu'à l'export
+                self.engine.control_at(max(self.engine.now(), time + delay), channel, control, value)
 
     # ---------- jeu au clavier ----------
     def eventFilter(self, obj, event):
@@ -1565,10 +1618,12 @@ class Studio(QWidget):
         m.save(self.project, self.save_path)
         step_ms = self.step_ms()
         last_bar = max((b for lane in m.LANES for b, c in enumerate(self.lane_data(lane)["song"]) if c), default=0)
+        controls = []
         notes = m.performance(m.compile_song(self.project), step_ms, self.project.get("swing", 0),
-                              self.project.get("humain", m.DEFAULT_HUMAN))
+                              self.project.get("humain", m.DEFAULT_HUMAN), m.effects_of(self.project), controls)
         # Le rendu prend du temps : il se fait à côté, pendant que la fenêtre affiche où on en est
-        self.exporter = Exporter(name, notes, (last_bar + 1) * m.STEPS_PER_BAR * step_ms, self.channels(), self)
+        self.exporter = Exporter(name, notes, (last_bar + 1) * m.STEPS_PER_BAR * step_ms, self.channels(), self,
+                                 controls)
         self.export_dialog = QProgressDialog("🎧 Je fabrique ton morceau…", None, 0, 100, self)
         self.export_dialog.setWindowTitle("Mon Studio")
         self.export_dialog.setWindowModality(Qt.WindowModality.WindowModal)

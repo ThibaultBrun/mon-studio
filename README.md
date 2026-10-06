@@ -55,6 +55,16 @@ Devant chaque ligne de la ligne de temps, une petite table de mixage, qui marche
 
 Les réglages sont gardés dans le morceau ; les anciens morceaux gardent leur son d'origine. L'export sonne exactement comme la lecture : les lignes coupées n'y sont pas (Mon Studio prévient avant d'exporter). Couper les accords ne change pas la basse, qui les suit toujours.
 
+## ✨ Des effets « waouh »
+
+Trois interrupteurs en haut de la fenêtre, rien à régler :
+
+- **🔁 Écho sur la mélodie** : chaque note de la mélodie se répète trois fois, de plus en plus doucement, en rythme (une croche pointée plus tard).
+- **💓 Pompe électro** : la basse et les accords baissent d'un coup à chaque grosse caisse, puis remontent : le son « respire », comme en électro.
+- **🌅 Intro qui s'ouvre** : sur les 4 premières mesures, le son (sauf la batterie) part étouffé et s'ouvre petit à petit.
+
+Les effets sont gardés dans le morceau (un ancien morceau les a tous éteints) et le morceau prêt « Électro » démarre avec l'écho et la pompe. Ils sont calculés avec les notes, par la même recette pour la lecture et l'export : le MP3 sonne comme dans l'appli.
+
 ## 🛟 Sans risque
 
 - **↩ Annuler / ↪ Rétablir** (Ctrl+Z, Ctrl+Y) ; un glisser dans la grille s'annule d'un coup.
