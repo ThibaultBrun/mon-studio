@@ -5,6 +5,7 @@ import copy
 import json
 import math
 import os
+import random
 import re
 import subprocess
 import sys
@@ -772,6 +773,10 @@ class Studio(QWidget):
         bar.addWidget(new)
         self.templates_btn = QPushButton("✨ Motifs prêts")
         bar.addWidget(self.templates_btn)
+        dice = QPushButton("🎲 Au hasard")
+        dice.setToolTip("Remplit le motif avec quelque chose qui sonne bien (un autre à chaque clic)")
+        dice.clicked.connect(self.random_pattern)
+        bar.addWidget(dice)
         dup = QPushButton("📋 Copier")
         dup.setObjectName("light")
         dup.clicked.connect(self.duplicate_pattern)
@@ -924,6 +929,21 @@ class Studio(QWidget):
         pattern = m.template(self.lane, name)
         pattern["name"] = f"{self.next_letter()} · {name}"
         self.add_pattern(pattern)
+
+    def random_pattern(self):
+        """🎲 Remplit le motif choisi au hasard, mais en musique (une nouvelle idée à chaque clic)."""
+        pattern = self.current_pattern()
+        if pattern is None:
+            self.new_pattern()
+            pattern = self.current_pattern()
+        else:
+            self.last_change = 0.0  # chaque clic s'annule à part, même s'ils sont rapprochés
+        new = m.random_pattern(self.project, self.lane, pattern, random)
+        new["name"] = f"{short_name(pattern)} · Au hasard"
+        pattern.clear()
+        pattern.update(new)
+        self.changed()
+        self.refresh_editor()
 
     def duplicate_pattern(self):
         pattern = self.current_pattern()
