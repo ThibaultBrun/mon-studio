@@ -88,42 +88,10 @@ for name, restype, argtypes in [
     ("fluid_event_set_source", None, [_p, ctypes.c_short]),
     ("fluid_event_set_dest", None, [_p, ctypes.c_short]),
     ("fluid_event_note", None, [_p, ctypes.c_int, ctypes.c_short, ctypes.c_short, ctypes.c_uint]),
-    ("fluid_event_control_change", None, [_p, ctypes.c_int, ctypes.c_short, ctypes.c_int]),
 ]:
     function = getattr(_lib, name)
     function.restype = restype
     function.argtypes = argtypes
-# Pour « l'intro qui s'ouvre » (FluidSynth 2 et plus) ; sans elles, cet effet ne fait simplement rien
-for name, restype, argtypes in [
-    ("new_fluid_mod", _p, []),
-    ("delete_fluid_mod", None, [_p]),
-    ("fluid_mod_set_source1", None, [_p, ctypes.c_int, ctypes.c_int]),
-    ("fluid_mod_set_source2", None, [_p, ctypes.c_int, ctypes.c_int]),
-    ("fluid_mod_set_dest", None, [_p, ctypes.c_int]),
-    ("fluid_mod_set_amount", None, [_p, ctypes.c_double]),
-    ("fluid_synth_add_default_mod", ctypes.c_int, [_p, _p, ctypes.c_int]),
-]:
-    function = getattr(_lib, name, None)
-    if function is not None:
-        function.restype = restype
-        function.argtypes = argtypes
-
-EFFECT_CONTROLS = {11: 127, 74: 127}  # expression (pompe) et brillance (intro) : valeurs « effet éteint »
-CUTOFF_RANGE = -6000  # en cents : contrôleur 74 à 0 = filtre 5 octaves plus bas, à 127 = son normal
-
-
-def add_filter_control(synth):
-    """Les banques de sons ne réagissent pas toutes au contrôleur 74 (brillance) : on le branche nous-mêmes
-    sur le filtre de chaque son. À 127 (la valeur normale), le son ne change pas du tout."""
-    if not hasattr(_lib, "fluid_synth_add_default_mod"):
-        return
-    mod = _lib.new_fluid_mod()
-    _lib.fluid_mod_set_source1(mod, 74, 0x10 | 0x01)  # contrôleur 74, sens inversé : 127 -> 0, 0 -> 1
-    _lib.fluid_mod_set_source2(mod, 0, 0)            # pas de deuxième source
-    _lib.fluid_mod_set_dest(mod, 8)                  # fréquence de coupure du filtre
-    _lib.fluid_mod_set_amount(mod, CUTOFF_RANGE)
-    _lib.fluid_synth_add_default_mod(synth, mod, 1)  # 1 = ajouter (la banque garde ses propres réglages)
-    _lib.delete_fluid_mod(mod)
 
 
 def _new_synth(realtime):
@@ -146,7 +114,6 @@ def _new_synth(realtime):
         _lib.fluid_settings_setstr(settings, b"audio.driver", driver.encode())
         _lib.fluid_settings_setint(settings, b"audio.period-size", 512)
     synth = _lib.new_fluid_synth(settings)
-    add_filter_control(synth)
     sfont = _lib.fluid_synth_sfload(synth, SOUNDFONT, 1)
     if sfont < 0:
         raise RuntimeError("Impossible de charger la banque de sons")
@@ -181,14 +148,6 @@ def setup_channels(synth, channels):
             number, bank, program = 1, 128, 0
         _lib.fluid_synth_program_select(synth, channel, number, bank, program)
         mix_channel(synth, channel, volume, fx)
-        reset_effects(synth, [channel])
-
-
-def reset_effects(synth, channels):
-    """Remet la pompe et le filtre au repos (sinon un arrêt au milieu d'un effet laisserait le son étouffé)."""
-    for channel in channels:
-        for control, value in EFFECT_CONTROLS.items():
-            _lib.fluid_synth_cc(synth, channel, control, value)
 
 
 class Engine:
@@ -227,15 +186,6 @@ class Engine:
         _lib.fluid_sequencer_send_at(self.sequencer, event, int(time_ms), 1)
         _lib.delete_fluid_event(event)
 
-    def control_at(self, time_ms, channel, control, value):
-        """Réglage d'effet programmé (pompe, filtre), comme une note."""
-        event = _lib.new_fluid_event()
-        _lib.fluid_event_set_source(event, -1)
-        _lib.fluid_event_set_dest(event, self.dest)
-        _lib.fluid_event_control_change(event, channel, control, value)
-        _lib.fluid_sequencer_send_at(self.sequencer, event, int(time_ms), 1)
-        _lib.delete_fluid_event(event)
-
     def note_on(self, channel, note, velocity=100):
         """Note jouée tout de suite et tenue jusqu'à note_off (jeu au clavier)."""
         _lib.fluid_synth_noteon(self.synth, channel, note, velocity)
@@ -250,7 +200,6 @@ class Engine:
     def stop(self):
         _lib.fluid_sequencer_remove_events(self.sequencer, -1, self.dest, -1)
         _lib.fluid_synth_all_notes_off(self.synth, -1)
-        reset_effects(self.synth, range(16))
 
     def close(self):
         self.stop()
@@ -262,16 +211,14 @@ class Engine:
         _lib.delete_fluid_settings(self.settings)
 
 
-def render_wav(path, notes, end_ms, channels, tail_seconds=2.5, progress=None, controls=()):
+def render_wav(path, notes, end_ms, channels, tail_seconds=2.5, progress=None):
     """Fabrique le fichier WAV du morceau.
 
     notes : [(début en ms, canal, note, force, durée en ms)], déjà « jouées » (swing, humain) par
-    musique.performance, comme en lecture directe. controls : [(moment en ms, canal, contrôleur, valeur)],
-    les réglages des effets (pompe, filtre), eux aussi calculés par musique.performance.
-    progress(fraction) est appelé pendant le rendu."""
+    musique.performance, comme en lecture directe. progress(fraction) est appelé pendant le rendu."""
     settings, synth = _new_synth(realtime=False)
     try:
-        _render(synth, channels, path, notes, end_ms, tail_seconds, progress, controls)
+        _render(synth, channels, path, notes, end_ms, tail_seconds, progress)
     finally:  # même si le rendu échoue, on libère le synthé
         for key in [k for k in _loaded if k[0] == synth]:
             del _loaded[key]
@@ -279,17 +226,15 @@ def render_wav(path, notes, end_ms, channels, tail_seconds=2.5, progress=None, c
         _lib.delete_fluid_settings(settings)
 
 
-def _render(synth, channels, path, notes, end_ms, tail_seconds, progress, controls=()):
+def _render(synth, channels, path, notes, end_ms, tail_seconds, progress):
     setup_channels(synth, channels)
     frames = SAMPLE_RATE / 1000
-    timeline = []  # (image, 0 = fin / 1 = réglage / 2 = début, canal, note ou contrôleur, force ou valeur)
+    timeline = []  # (image, 1 = début / 0 = fin, canal, note, force)
     for start_ms, channel, note, velocity, duration_ms in notes:
         start = int(start_ms * frames)
-        timeline.append((start, 2, channel, note, velocity))
+        timeline.append((start, 1, channel, note, velocity))
         timeline.append((start + max(1, int(duration_ms * frames)), 0, channel, note, 0))
-    for time_ms, channel, control, value in controls:
-        timeline.append((int(time_ms * frames), 1, channel, control, value))
-    timeline.sort(key=lambda e: (e[0], e[1]))  # au même instant : les fins, puis les réglages, puis les débuts
+    timeline.sort(key=lambda e: (e[0], e[1]))  # les fins avant les débuts au même instant
     end_frame = int(end_ms * frames + tail_seconds * SAMPLE_RATE)
 
     with wave.open(str(path), "wb") as out:
@@ -309,12 +254,10 @@ def _render(synth, channels, path, notes, end_ms, tail_seconds, progress, contro
                 if progress and position % (SAMPLE_RATE // 2) < 4096:
                     progress(min(1.0, position / max(1, end_frame)))
 
-        for frame, kind, channel, number, value in timeline:
+        for frame, is_on, channel, note, velocity in timeline:
             write_until(frame)
-            if kind == 2:
-                _lib.fluid_synth_noteon(synth, channel, number, value)
-            elif kind == 1:
-                _lib.fluid_synth_cc(synth, channel, number, value)
+            if is_on:
+                _lib.fluid_synth_noteon(synth, channel, note, velocity)
             else:
-                _lib.fluid_synth_noteoff(synth, channel, number)
+                _lib.fluid_synth_noteoff(synth, channel, note)
         write_until(end_frame)
