@@ -436,16 +436,17 @@ class Exporter(QThread):
     progress = pyqtSignal(int)
     done = pyqtSignal(str, str)  # nom du morceau, message d'erreur ("" si tout va bien)
 
-    def __init__(self, name, notes, end_ms, channels, parent):
+    def __init__(self, name, notes, end_ms, channels, parent, controls=()):
         super().__init__(parent)
         self.name, self.notes, self.end_ms, self.channels = name, notes, end_ms, channels
+        self.controls = controls
 
     def run(self):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 wav = Path(tmp) / "morceau.wav"
                 moteur.render_wav(wav, self.notes, self.end_ms, self.channels,
-                                  progress=lambda fraction: self.progress.emit(int(fraction * 85)))
+                                  progress=lambda fraction: self.progress.emit(int(fraction * 85)), controls=self.controls)
                 self.progress.emit(90)
                 mp3 = CREATIONS / f"Mes créations - {self.name}.mp3"
                 # « Mastering » léger : compression douce, limiteur, puis volume standard
@@ -589,6 +590,7 @@ class Studio(QWidget):
             menu.addAction(name, lambda n=name: self.load_style(n))
         styles.setMenu(menu)
         bar.addWidget(styles)
+        bar.addLayout(self.build_effects())
         bar.addStretch()
         for text, slot in [("🆕 Nouveau", self.new_song), ("📂 Ouvrir", self.open_song), ("💾 Sauvegarder", self.save_song)]:
             button = QPushButton(text)
@@ -599,6 +601,24 @@ class Studio(QWidget):
         export.clicked.connect(self.export_song)
         bar.addWidget(export)
         return rows
+
+    def build_effects(self):
+        """Les effets « waouh » : un gros interrupteur par effet, rien à régler."""
+        box = QHBoxLayout()
+        box.setSpacing(6)
+        box.addWidget(QLabel("  Effets :"))
+        self.effect_buttons = {}
+        for name, (text, tip) in m.EFFECTS.items():
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setStyleSheet("QPushButton { background: #f3ecff; color: #4a2a80; border: 2px solid #9c5cf2; }"
+                                 "QPushButton:hover { background: #e4d6ff; }"
+                                 "QPushButton:checked { background: #9c5cf2; color: white; }")
+            button.clicked.connect(lambda checked, n=name: self.set_effect(n, checked))
+            self.effect_buttons[name] = button
+            box.addWidget(button)
+        return box
 
     def build_timeline(self):
         grid = QVBoxLayout()
@@ -722,6 +742,8 @@ class Studio(QWidget):
         self.human_label.setText(f"Humain {self.project.get('humain', m.DEFAULT_HUMAN)} %")
         self.swing_label.setText(f"Swing {self.project.get('swing', 0)} %")
         self.update_undo_buttons()
+        for name, button in self.effect_buttons.items():
+            button.setChecked(bool(m.effects_of(self.project).get(name)))
         for lane in m.LANES:
             data = self.project["lanes"][lane]
             for widget, setter, value in [(self.instrument_boxes[lane], "setCurrentIndex", data["instrument"]),
@@ -996,6 +1018,19 @@ class Studio(QWidget):
         self.swing_label.setText(f"Swing {value} %")
         self.changed()
 
+    def set_effect(self, name, on):
+        effects = dict(m.effects_of(self.project))
+        if on:
+            effects[name] = True
+        else:
+            effects.pop(name, None)
+            moteur.reset_effects(self.engine.synth, range(16))  # pas de son resté étouffé
+        if effects:
+            self.project["effets"] = effects
+        else:
+            self.project.pop("effets", None)  # comme un ancien morceau : rien n'a changé
+        self.changed()
+
     def set_muted(self, lane, muted):
         self.lane_data(lane)["muted"] = muted
         self.changed()
@@ -1009,7 +1044,7 @@ class Studio(QWidget):
             _, bank, program, soundfont, gain_db = instruments[min(data["instrument"], len(instruments) - 1)]
             volume = max(1, min(127, round(data["volume"] * 10 ** (gain_db / 40))))  # le volume MIDI suit 40·log10
             result[m.LANE_INFO[lane][1]] = (bank, program, volume, soundfont, m.LANE_FX[lane])
-        return result
+        return m.with_echo_channel(result)
 
     def apply_instruments(self):
         self.engine.setup(self.channels())
@@ -1155,13 +1190,18 @@ class Studio(QWidget):
         now = self.engine.now()
         step_ms = self.step_ms()
         swing, human = self.project.get("swing", 0), self.project.get("humain", m.DEFAULT_HUMAN)
+        effects = m.effects_of(self.project)
         while self.start_tick + self.next_step * step_ms < now + LOOKAHEAD_MS:
             time = self.start_tick + self.next_step * step_ms
             step = self.next_step % self.loop_steps
+            controls = m.step_controls(step, effects) if self.playing == "song" else []
             for hit in self.events.get(step, []):
                 gap = self.gaps.get((step, hit[0], hit[1]))
                 offset, velocity, duration = m.perform(self.next_step, hit, gap, swing, step_ms, human)
                 self.engine.note_at(max(self.engine.now(), time + offset), hit[0], hit[1], velocity, duration)
+                controls += [(offset + delay, *rest) for delay, *rest in m.hit_controls(hit, gap, step_ms, effects)]
+            for delay, channel, control, value in controls:  # effets (pompe, filtre) : même recette qu'à l'export
+                self.engine.control_at(max(self.engine.now(), time + delay), channel, control, value)
             self.next_step += 1
         self.update_views()
 
@@ -1415,10 +1455,12 @@ class Studio(QWidget):
         m.save(self.project, self.save_path)
         step_ms = self.step_ms()
         last_bar = max((b for lane in m.LANES for b, c in enumerate(self.lane_data(lane)["song"]) if c), default=0)
+        controls = []
         notes = m.performance(m.compile_song(self.project), step_ms, self.project.get("swing", 0),
-                              self.project.get("humain", m.DEFAULT_HUMAN))
+                              self.project.get("humain", m.DEFAULT_HUMAN), m.effects_of(self.project), controls)
         # Le rendu prend du temps : il se fait à côté, pendant que la fenêtre affiche où on en est
-        self.exporter = Exporter(name, notes, (last_bar + 1) * m.STEPS_PER_BAR * step_ms, self.channels(), self)
+        self.exporter = Exporter(name, notes, (last_bar + 1) * m.STEPS_PER_BAR * step_ms, self.channels(), self,
+                                 controls)
         self.export_dialog = QProgressDialog("🎧 Je fabrique ton morceau…", None, 0, 100, self)
         self.export_dialog.setWindowTitle("Mon Studio")
         self.export_dialog.setWindowModality(Qt.WindowModality.WindowModal)

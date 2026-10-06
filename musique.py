@@ -81,6 +81,22 @@ ACCENTS = {"fort": 1.25, "doux": 0.5}  # multiplicateur de force d'une case
 MAX_SWING = 60       # en %, retard maximum des doubles croches « faibles »
 DEFAULT_HUMAN = 40   # en %, petites imperfections de force et de placement, comme un vrai musicien
 
+# --- Effets « waouh » (project["effets"] ; absent = éteint, le son ne change pas) ---
+EFFECTS = {  # nom gardé dans le projet : (texte du bouton, explication)
+    "echo": ("🔁 Écho sur la mélodie", "La mélodie se répète toute seule, de plus en plus doucement, en rythme avec le morceau."),
+    "pompe": ("💓 Pompe électro", "La basse et les accords « respirent » à chaque coup de grosse caisse, comme en électro."),
+    "montee": ("🌅 Intro qui s'ouvre", "Au début du morceau, le son est étouffé puis s'ouvre petit à petit (sauf la batterie)."),
+}
+ECHO_CHANNEL = 3      # les échos de la mélodie jouent sur leur propre canal (même instrument que la mélodie)
+ECHO_STEPS = 3        # écart entre deux échos : 3 doubles croches = une croche pointée
+ECHO_DECAY = [0.62, 0.4, 0.25]  # force de chaque écho par rapport à la note jouée
+PUMP_CHANNELS = (0, 1)  # basse et accords
+PUMP_DB = 14            # de combien de dB elles baissent sous la grosse caisse
+EXPRESSION = 11         # contrôleur MIDI « expression » (le volume de la table de mixage reste libre)
+CUTOFF = 74             # contrôleur MIDI « brillance » (filtre) ; voir moteur.add_filter_control
+SWEEP_STEPS = 4 * STEPS_PER_BAR  # l'intro s'ouvre sur 4 mesures
+SWEEP_CHANNELS = (0, 1, 2, ECHO_CHANNEL)
+
 
 # --- Théorie ---
 def scale_note(key, degree, base):
@@ -215,11 +231,13 @@ def place(project, lane, pattern_index, bar):
             lane_data["song"][bar + i] = [pattern_index, i]
 
 
-def song_style(name, tempo, key, instruments, patterns, arrangement, chord_style="tenu"):
+def song_style(name, tempo, key, instruments, patterns, arrangement, chord_style="tenu", effects=None):
     """patterns : {ligne: [noms de modèles]} ; arrangement : {ligne: chaîne de 16 caractères, un par mesure :
     'A', 'B'… = début du motif, '.' = rien, '-' = suite du motif précédent}."""
     project = new_project()
     project.update(name=name, tempo=tempo, key=key)
+    if effects:
+        project["effets"] = dict(effects)
     for lane in LANES:
         lane_data = project["lanes"][lane]
         lane_data["instrument"] = instruments[lane]
@@ -253,7 +271,7 @@ STYLES = {
         {"batterie": ["Électro 4/4", "Roulement"], "basse": ["Électro", "Octaves disco"],
          "accords": ["Épique (1-6-3-7)"], "melodie": ["Écho", "Montée"]},
         {"accords": "A---A---A---A---", "batterie": "AAAAAAABAAAAAAAB", "basse": "....AAAABBBBBBBB",
-         "melodie": "....AAAAAAABAAAB"}, chord_style="arpege"),
+         "melodie": "....AAAAAAABAAAB"}, chord_style="arpege", effects={"echo": True, "pompe": True}),
     "Reggaeton": lambda: song_style(
         "Reggaeton", 94, 2, {"batterie": 5, "basse": 2, "accords": 1, "melodie": 0},
         {"batterie": ["Reggaeton", "Roulement"], "basse": ["Reggaeton"],
@@ -332,15 +350,86 @@ def perform(step, hit, gap, swing, step_ms, human):
     return offset, humanize(velocity, human), max(1.0, duration)
 
 
-def performance(events, step_ms, swing, human):
-    """Toutes les notes d'un morceau, prêtes à jouer : [(début en ms, canal, note, force, durée en ms)]."""
+def performance(events, step_ms, swing, human, effects=None, controls=None):
+    """Toutes les notes d'un morceau, prêtes à jouer : [(début en ms, canal, note, force, durée en ms)].
+    Si une liste controls est donnée, on y ajoute les réglages des effets : [(moment en ms, canal, contrôleur, valeur)]."""
     gaps = next_hits(events)
     notes = []
     for step in sorted(events):
         for hit in events[step]:
-            offset, velocity, duration = perform(step, hit, gaps.get((step, hit[0], hit[1])), swing, step_ms, human)
-            notes.append((max(0.0, step * step_ms + offset), hit[0], hit[1], velocity, duration))
+            gap = gaps.get((step, hit[0], hit[1]))
+            offset, velocity, duration = perform(step, hit, gap, swing, step_ms, human)
+            start = max(0.0, step * step_ms + offset)
+            notes.append((start, hit[0], hit[1], velocity, duration))
+            if controls is not None:
+                controls += [(start + delay, *rest) for delay, *rest in hit_controls(hit, gap, step_ms, effects)]
+    if controls is not None:
+        for step in range(SWEEP_STEPS + 1):
+            controls += [(step * step_ms + delay, *rest) for delay, *rest in step_controls(step, effects)]
     return notes
+
+
+# --- Effets : la même recette pour la lecture en direct ET l'export ---
+def effects_of(project):
+    return project.get("effets") or {}
+
+
+def add_echo(events, loop_steps=None):
+    """Ajoute les échos de la mélodie, directement comme des notes : rejouées plus tard, de plus en plus doucement.
+    En boucle (loop_steps), les échos qui dépassent reviennent au début du tour."""
+    melody = LANE_INFO["melodie"][1]
+    echoes = {}
+    for step, hits in events.items():
+        for channel, note, velocity, length in hits:
+            if channel != melody:
+                continue
+            for i, decay in enumerate(ECHO_DECAY, start=1):
+                at = step + i * ECHO_STEPS
+                if loop_steps:
+                    at %= loop_steps
+                force = max(1, round(velocity * decay))
+                # deux échos sur la même note au même moment : on garde le plus fort
+                if force > echoes.get((at, note), (0, 0))[0]:
+                    echoes[(at, note)] = (force, length)
+    for (at, note), (force, length) in sorted(echoes.items()):
+        events.setdefault(at, []).append((ECHO_CHANNEL, note, force, length))
+    return events
+
+
+def hit_controls(hit, gap, step_ms, effects):
+    """Réglages déclenchés par une frappe : [(décalage en ms depuis la frappe, canal, contrôleur, valeur)].
+    « Pompe » : à chaque grosse caisse, la basse et les accords baissent d'un coup puis remontent doucement,
+    avant la grosse caisse suivante (gap, en pas)."""
+    channel, note = hit[0], hit[1]
+    if not (effects or {}).get("pompe") or channel != LANE_INFO["batterie"][1] or note != DRUM_ROWS[0][1]:
+        return []
+    length = min(gap or 4, 4) * step_ms * 0.85  # remontée sur un temps au plus
+    points = 12
+    result = []
+    for i in range(points + 1):
+        t = i / points
+        db = -PUMP_DB * (1 - t) ** 2       # creux tout de suite, puis remontée en douceur
+        value = max(0, min(127, round(127 * 10 ** (db / 40))))  # le volume MIDI suit 40·log10
+        result += [(t * length, ch, EXPRESSION, value) for ch in PUMP_CHANNELS]
+    return result
+
+
+def step_controls(step, effects):
+    """Réglages liés à la position dans le morceau : [(décalage en ms, canal, contrôleur, valeur)].
+    « Intro qui s'ouvre » : sur les 4 premières mesures, le filtre s'ouvre petit à petit."""
+    if not (effects or {}).get("montee") or step > SWEEP_STEPS:
+        return []
+    t = step / SWEEP_STEPS
+    value = round(127 * t ** 1.3)  # s'ouvre doucement, puis de plus en plus vite jusqu'au son normal
+    return [(0.0, ch, CUTOFF, value) for ch in SWEEP_CHANNELS]
+
+
+def with_echo_channel(channels):
+    """Le canal des échos joue le même instrument, avec les mêmes réglages, que la mélodie."""
+    melody = LANE_INFO["melodie"][1]
+    if melody in channels:
+        channels[ECHO_CHANNEL] = channels[melody]
+    return channels
 
 
 def runs(cells, total_steps):
@@ -427,6 +516,8 @@ def compile_song(project):
                 if start_step <= step < start_step + span * STEPS_PER_BAR:
                     events.setdefault(origin + step, []).append((channel, note, velocity, length))
             bar += span
+    if effects_of(project).get("echo"):
+        add_echo(events)
     return events
 
 
@@ -436,6 +527,8 @@ def compile_pattern(project, lane, pattern):
     events = {}
     for step, note, velocity, length in pattern_notes(project, lane, pattern, lambda step: 0):
         events.setdefault(step, []).append((channel, note, velocity, length))
+    if effects_of(project).get("echo"):
+        add_echo(events, pattern["bars"] * STEPS_PER_BAR)
     return events
 
 
