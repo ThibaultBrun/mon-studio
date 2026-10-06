@@ -68,7 +68,9 @@ INSTRUMENTS = {
                 ("Violon", 0, 40, FLUIDR3, -4.3)],
 }
 # Effets par ligne : (envoi de réverbe, envoi de chorus, position stéréo 0 = gauche, 64 = centre, 127 = droite)
+# Ce sont les réglages de départ de la table de mixage (« Écho » = la réverbe, « ◀ ▶ » = la stéréo).
 LANE_FX = {"batterie": (25, 0, 64), "basse": (8, 0, 64), "accords": (55, 25, 50), "melodie": (50, 12, 78)}
+DEFAULT_VOLUME = 100
 
 # Batterie, de la ligne du bas (0) à celle du haut : (nom, note General MIDI, force)
 DRUM_ROWS = [("Grosse caisse", 36, 115), ("Caisse claire", 38, 105), ("Clap", 39, 100), ("Charleston", 42, 75),
@@ -198,12 +200,60 @@ def template(lane, name):
 
 
 # --- Morceau ---
+def mixer_defaults(lane):
+    """Réglages de table de mixage d'une ligne au départ : le son d'avant la table de mixage."""
+    reverb, _chorus, pan = LANE_FX[lane]
+    return {"volume": DEFAULT_VOLUME, "pan": pan, "echo": reverb, "muted": False, "solo": False}
+
+
 def new_project():
     return {
         "name": "Mon morceau", "tempo": 95, "key": 0, "swing": 0, "humain": DEFAULT_HUMAN,
-        "lanes": {lane: {"instrument": 0, "volume": 100, "muted": False, "patterns": [], "song": [None] * SONG_BARS}
+        "lanes": {lane: {"instrument": 0, **mixer_defaults(lane), "patterns": [], "song": [None] * SONG_BARS}
                   for lane in LANES},
     }
+
+
+def complete(project):
+    """Ajoute les réglages manquants (fichiers d'avant la table de mixage) : ils gardent leur son d'origine."""
+    for lane in LANES:
+        lane_data = project["lanes"][lane]
+        for name, value in mixer_defaults(lane).items():
+            lane_data.setdefault(name, value)
+    return project
+
+
+def audible(project, lane):
+    """La ligne s'entend-elle ? Si une ligne est en ⭐ Solo, on n'entend que les lignes en solo ; sinon toutes sauf les 🔇."""
+    lanes = project["lanes"]
+    if any(lanes[l].get("solo") for l in LANES):
+        return bool(lanes[lane].get("solo"))
+    return not lanes[lane].get("muted")
+
+
+def lane_mix(project, lane):
+    """(volume 0-127 avec la correction de l'instrument, (réverbe, chorus, stéréo)) d'une ligne."""
+    lane_data = project["lanes"][lane]
+    instruments = INSTRUMENTS[lane]
+    gain_db = instruments[min(lane_data["instrument"], len(instruments) - 1)][4]
+    volume = lane_data.get("volume", DEFAULT_VOLUME)
+    if volume > 0:  # à 0, c'est vraiment silencieux
+        volume = max(1, min(127, round(volume * 10 ** (gain_db / 40))))  # le volume MIDI suit 40·log10
+    defaults = mixer_defaults(lane)
+    fx = (lane_data.get("echo", defaults["echo"]), LANE_FX[lane][1], lane_data.get("pan", defaults["pan"]))
+    return volume, fx
+
+
+def channels(project):
+    """Les réglages des canaux du synthé, les mêmes pour la lecture et l'export :
+    {canal: (banque, programme, volume, banque de sons à part ou None, (réverbe, chorus, stéréo))}."""
+    result = {}
+    for lane in LANES:
+        instruments = INSTRUMENTS[lane]
+        _, bank, program, soundfont, _gain = instruments[min(project["lanes"][lane]["instrument"], len(instruments) - 1)]
+        volume, fx = lane_mix(project, lane)
+        result[LANE_INFO[lane][1]] = (bank, program, volume, soundfont, fx)
+    return result
 
 
 def place(project, lane, pattern_index, bar):
@@ -266,7 +316,7 @@ def chord_at(project, bar, beat):
     """Degré de l'accord qui joue à ce moment du morceau (0 = tonique si aucun accord)."""
     lane = project["lanes"]["accords"]
     cell = lane["song"][bar]
-    if not cell or lane["muted"]:
+    if not cell:  # même coupés (🔇) ou sans solo, les accords guident la basse : couper une ligne ne change pas les autres
         return 0
     pattern = lane["patterns"][cell[0]]
     degree = pattern["chords"][cell[1] * BEATS_PER_BAR + beat]
@@ -400,7 +450,7 @@ def compile_song(project):
     events = {}
     for lane in LANES:
         lane_data = project["lanes"][lane]
-        if lane_data["muted"]:
+        if not audible(project, lane):  # 🔇 ou pas en ⭐ Solo : en direct comme à l'export
             continue
         channel = LANE_INFO[lane][1]
         bar = 0
@@ -461,4 +511,4 @@ def save(project, path):
 
 def load(path):
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        return complete(json.load(f))

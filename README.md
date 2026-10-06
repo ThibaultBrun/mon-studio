@@ -45,6 +45,16 @@ Chaque instrument a une correction de volume mesurée pour qu'ils sonnent tous a
 - **Swing** : retarde régulièrement les doubles croches « faibles » pour faire balancer le rythme (hip-hop, jazz).
 - **Humain** : petites imperfections aléatoires de placement (jusqu'à ±15 ms) et de force, comme un vrai musicien. À 0, tout est pile sur la grille.
 
+## 🎚 Table de mixage et mode DJ
+
+Devant chaque ligne de la ligne de temps, une petite table de mixage, qui marche aussi **pendant que le morceau joue** :
+
+- **🔇** coupe la ligne, **⭐ Solo** n'écoute qu'elle (plusieurs solos possibles) : l'effet est immédiat, et une ligne coupée devient grise ;
+- **Volume** ; avec le bouton **🎚 Table de mixage**, aussi **◀ ▶** (plus à gauche ou plus à droite) et **Écho** (comme dans une grande salle) ;
+- le **Tempo** (case ou curseur) se change en pleine lecture, sans arrêt ni saut.
+
+Les réglages sont gardés dans le morceau ; les anciens morceaux gardent leur son d'origine. L'export sonne exactement comme la lecture : les lignes coupées n'y sont pas (Mon Studio prévient avant d'exporter). Couper les accords ne change pas la basse, qui les suit toujours.
+
 ## 🛟 Sans risque
 
 - **↩ Annuler / ↪ Rétablir** (Ctrl+Z, Ctrl+Y) ; un glisser dans la grille s'annule d'un coup.

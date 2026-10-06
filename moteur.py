@@ -73,6 +73,7 @@ for name, restype, argtypes in [
     ("fluid_synth_noteon", ctypes.c_int, [_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]),
     ("fluid_synth_noteoff", ctypes.c_int, [_p, ctypes.c_int, ctypes.c_int]),
     ("fluid_synth_all_notes_off", ctypes.c_int, [_p, ctypes.c_int]),
+    ("fluid_synth_all_sounds_off", ctypes.c_int, [_p, ctypes.c_int]),
     ("fluid_synth_write_s16", ctypes.c_int, [_p, ctypes.c_int, _p, ctypes.c_int, ctypes.c_int, _p, ctypes.c_int, ctypes.c_int]),
     ("new_fluid_audio_driver", _p, [_p, _p]),
     ("delete_fluid_audio_driver", None, [_p]),
@@ -130,15 +131,23 @@ def sfont_id(synth, path):
     return _loaded[(synth, path)]
 
 
+def mix_channel(synth, channel, volume, fx):
+    """Réglages de table de mixage d'un canal : volume (CC7), envoi de réverbe (CC91), de chorus (CC93), stéréo (CC10).
+    Ils s'appliquent tout de suite, même aux notes qui sonnent déjà."""
+    reverb, chorus, pan = fx
+    for control, value in ((7, volume), (91, reverb), (93, chorus), (10, pan)):
+        _lib.fluid_synth_cc(synth, channel, control, max(0, min(127, int(value))))
+
+
 def setup_channels(synth, channels):
-    """channels : {canal: (banque, programme, volume 0-127, fichier de banque à part ou None, (réverbe, chorus, stéréo))}"""
-    for channel, (bank, program, volume, extra, (reverb, chorus, pan)) in channels.items():
+    """channels : {canal: (banque, programme, volume 0-127, fichier de banque à part ou None, (réverbe, chorus, stéréo))}
+    La même fonction sert à la lecture et à l'export : ils sonnent pareil."""
+    for channel, (bank, program, volume, extra, fx) in channels.items():
         number = sfont_id(synth, extra) if extra else 1
         if number is None:  # banque absente : batterie standard de la banque principale
             number, bank, program = 1, 128, 0
         _lib.fluid_synth_program_select(synth, channel, number, bank, program)
-        for control, value in ((7, volume), (91, reverb), (93, chorus), (10, pan)):
-            _lib.fluid_synth_cc(synth, channel, control, value)
+        mix_channel(synth, channel, volume, fx)
 
 
 class Engine:
@@ -156,6 +165,15 @@ class Engine:
 
     def setup(self, channels):
         setup_channels(self.synth, channels)
+
+    def mix(self, channel, volume, fx):
+        """Change le volume, la stéréo ou l'écho d'un canal pendant que ça joue (sans changer d'instrument)."""
+        mix_channel(self.synth, channel, volume, fx)
+
+    def silence(self, channel):
+        """Coupe un canal tout de suite : volume à 0 et plus aucun son, même les notes déjà programmées."""
+        _lib.fluid_synth_cc(self.synth, channel, 7, 0)
+        _lib.fluid_synth_all_sounds_off(self.synth, channel)
 
     def now(self):
         return _lib.fluid_sequencer_get_tick(self.sequencer)

@@ -3,6 +3,7 @@
 sur une ligne de temps. Pensé pour un enfant : gros boutons, notes toujours dans la gamme, modèles prêts."""
 import copy
 import json
+import math
 import os
 import re
 import subprocess
@@ -72,6 +73,8 @@ HOME_ROW = list(range(38, 48))   # rangée du milieu : Q S D F G H J K L M (AZER
 TOP_ROW = list(range(24, 34))    # rangée du dessus : A Z E R T Y U I O P (AZERTY)
 HOME_LETTERS, TOP_LETTERS = "QSDFGHJKLM", "AZERTYUIOP"
 MAX_KEY_ROWS = {"batterie": len(m.DRUM_ROWS), "basse": m.BASS_ROWS, "accords": 7, "melodie": m.MELODY_ROWS}
+# Largeurs des colonnes devant la ligne de temps (nom, instrument, puis la table de mixage)
+CHIP_W, INSTRUMENT_W, MUTE_W, SOLO_W, KNOB_W, GAP = 130, 215, 46, 88, 84, 6
 
 
 def key_slot(event):
@@ -114,8 +117,15 @@ QPushButton#play { background: #43a047; font-size: 20px; min-width: 130px; }
 QPushButton#play:checked { background: #e53935; }
 QPushButton#light { background: #eef4fc; color: #1a3d66; border: 2px solid #4a90e2; }
 QPushButton#light:hover { background: #d6e6fa; }
-QPushButton#mute { background: #ddd; color: #333; padding: 4px 8px; }
+QPushButton#light:checked { background: #1a3d66; color: white; }
+QPushButton#mute, QPushButton#solo { background: #ddd; color: #333; padding: 4px 8px; }
 QPushButton#mute:checked { background: #e53935; color: white; }
+QPushButton#solo:checked { background: #ffc107; color: #1a1a1a; }
+QLabel#mixcol { color: #555; font-size: 13px; font-weight: bold; }
+QSlider::groove:horizontal { height: 8px; background: #d0d7e2; border-radius: 4px; }
+QSlider::sub-page:horizontal { background: #4a90e2; border-radius: 4px; }
+QSlider::handle:horizontal { background: #1a3d66; width: 20px; margin: -7px 0; border-radius: 10px; }
+QSlider#pan::sub-page:horizontal { background: #d0d7e2; }
 QPushButton#chip { background: white; color: #1a1a1a; border: 2px solid #bbb; padding: 6px 12px; }
 QPushButton#chip:checked { border: 3px solid #1a3d66; background: #fff8d6; }
 QLabel#title { font-size: 22px; font-weight: bold; color: #4a90e2; }
@@ -189,7 +199,8 @@ class TimelineRow(QWidget):
                 continue
             pattern = lane_data["patterns"][cell[0]]
             rect = QRectF(bar * w + 2, 6, w - 4, self.height() - 12)
-            painter.setBrush(lane_color(self.lane, cell[0]).darker(130 if lane_data["muted"] else 100))
+            silent = not m.audible(self.studio.project, self.lane)  # 🔇 ou pas en ⭐ Solo : motifs grisés
+            painter.setBrush(QColor("#bbb") if silent else lane_color(self.lane, cell[0]))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(rect, 8, 8)
             if cell[1] == 0:  # nom du motif sur sa première mesure
@@ -491,6 +502,8 @@ class Studio(QWidget):
         self.custom_name = None
         self.before_defis = None   # morceau mis de côté pendant les défis
         self.held = {}             # touches enfoncées : slot -> (canal, notes, ligne, début en pas)
+        self.silencing = {}        # canaux qu'on vient de couper : canal -> (numéro, pas programmés jusque-là)
+        self.silence_count = 0
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(28, 18, 28, 18)  # de l'air autour de la fenêtre
@@ -538,6 +551,12 @@ class Studio(QWidget):
         self.tempo.setSuffix(" BPM")
         self.tempo.valueChanged.connect(self.set_tempo)
         bar.addWidget(self.tempo)
+        self.tempo_slider = QSlider(Qt.Orientation.Horizontal)
+        self.tempo_slider.setRange(60, 180)
+        self.tempo_slider.setFixedWidth(140)
+        self.tempo_slider.setToolTip("Plus lent ◀ ▶ plus rapide : ça marche aussi pendant que la musique joue")
+        self.tempo_slider.valueChanged.connect(self.tempo.setValue)
+        bar.addWidget(self.tempo_slider)
         bar.addWidget(QLabel("Gamme"))
         self.key = QComboBox()
         self.key.addItems([k[0] for k in m.KEYS])
@@ -589,6 +608,12 @@ class Studio(QWidget):
             menu.addAction(name, lambda n=name: self.load_style(n))
         styles.setMenu(menu)
         bar.addWidget(styles)
+        self.mixer_btn = QPushButton("🎚 Table de mixage")
+        self.mixer_btn.setObjectName("light")
+        self.mixer_btn.setCheckable(True)
+        self.mixer_btn.setToolTip("Règle la place de chaque instrument à gauche ou à droite, et son écho")
+        self.mixer_btn.clicked.connect(self.show_mixer)
+        bar.addWidget(self.mixer_btn)
         bar.addStretch()
         for text, slot in [("🆕 Nouveau", self.new_song), ("📂 Ouvrir", self.open_song), ("💾 Sauvegarder", self.save_song)]:
             button = QPushButton(text)
@@ -601,56 +626,101 @@ class Studio(QWidget):
         return rows
 
     def build_timeline(self):
+        """La ligne de temps, avec devant chaque ligne son nom, son instrument et sa bande de table de mixage :
+        🔇 couper, ⭐ Solo, Volume, puis (avec « 🎚 Table de mixage ») ◀ ▶ gauche/droite et Écho."""
         grid = QVBoxLayout()
         numbers_row = QHBoxLayout()
-        spacer = QWidget()
-        spacer.setFixedWidth(450)
-        numbers_row.addWidget(spacer)
+        self.headers = []          # les en-têtes ont tous la même largeur, qui change quand on montre la table
+        self.mixer_extras = []     # ce qui n'apparaît qu'avec « 🎚 Table de mixage »
+        top = QWidget()
+        t = QHBoxLayout(top)
+        t.setContentsMargins(0, 0, 0, 0)
+        t.setSpacing(GAP)
+        t.addSpacing(CHIP_W + GAP + INSTRUMENT_W + GAP + MUTE_W + GAP + SOLO_W)
+        for text, extra in (("Volume", False), ("◀  ▶", True), ("Écho", True)):
+            label = QLabel(text)
+            label.setObjectName("mixcol")
+            label.setFixedWidth(KNOB_W)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            t.addWidget(label)
+            if extra:
+                self.mixer_extras.append(label)
+        t.addStretch()
+        self.headers.append(top)
+        numbers_row.addWidget(top)
         self.numbers = BarNumbers(self)
         self.numbers.clicked.connect(self.play_from_bar)
         numbers_row.addWidget(self.numbers, 1)
         grid.addLayout(numbers_row)
-        self.rows, self.instrument_boxes, self.mute_buttons, self.volume_sliders, self.lane_labels = {}, {}, {}, {}, {}
+        self.rows, self.instrument_boxes, self.lane_labels = {}, {}, {}
+        self.mute_buttons, self.solo_buttons, self.volume_sliders, self.pan_sliders, self.echo_sliders = {}, {}, {}, {}, {}
         for lane in m.LANES:
             row = QHBoxLayout()
             header = QWidget()
-            header.setFixedWidth(450)
             h = QHBoxLayout(header)
             h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(GAP)
             label = QPushButton(m.LANE_INFO[lane][0])
             label.setObjectName("chip")
             label.setCheckable(True)
-            label.setFixedWidth(130)
+            label.setFixedWidth(CHIP_W)
             label.clicked.connect(lambda _, l=lane: self.select_lane(l))
             self.lane_labels[lane] = label
             h.addWidget(label)
             box = QComboBox()
             box.addItems([instrument[0] for instrument in m.INSTRUMENTS[lane]])
             box.currentIndexChanged.connect(lambda i, l=lane: self.set_instrument(l, i))
-            box.setMinimumWidth(215)  # « Vraie batterie pop / rock » en entier
+            box.setFixedWidth(INSTRUMENT_W)  # « Vraie batterie pop / rock » en entier
             self.instrument_boxes[lane] = box
-            h.addWidget(box, 1)
+            h.addWidget(box)
             mute = QPushButton("🔇")
             mute.setObjectName("mute")
             mute.setCheckable(True)
-            mute.setToolTip("Couper cette ligne")
+            mute.setFixedWidth(MUTE_W)
+            mute.setToolTip("Couper cette ligne (même pendant que ça joue)")
             mute.clicked.connect(lambda checked, l=lane: self.set_muted(l, checked))
             self.mute_buttons[lane] = mute
             h.addWidget(mute)
-            volume = QSlider(Qt.Orientation.Horizontal)
-            volume.setRange(0, 127)
-            volume.setFixedWidth(60)
-            volume.setToolTip("Volume")
-            volume.valueChanged.connect(lambda v, l=lane: self.set_volume(l, v))
-            self.volume_sliders[lane] = volume
-            h.addWidget(volume)
+            solo = QPushButton("⭐ Solo")
+            solo.setObjectName("solo")
+            solo.setCheckable(True)
+            solo.setFixedWidth(SOLO_W)
+            solo.setToolTip("N'écouter que cette ligne (et les autres lignes en solo)")
+            solo.clicked.connect(lambda checked, l=lane: self.set_solo(l, checked))
+            self.solo_buttons[lane] = solo
+            h.addWidget(solo)
+            for sliders, setter, tip, extra in (
+                    (self.volume_sliders, self.set_volume, "Volume : plus fort vers la droite", False),
+                    (self.pan_sliders, self.set_pan, "◀ à gauche, ▶ à droite, au milieu des deux côtés", True),
+                    (self.echo_sliders, self.set_echo, "Écho : comme si on jouait dans une grande salle", True)):
+                slider = QSlider(Qt.Orientation.Horizontal)
+                slider.setRange(0, 127)
+                slider.setFixedWidth(KNOB_W)
+                slider.setToolTip(tip)
+                slider.valueChanged.connect(lambda v, l=lane, f=setter: f(l, v))
+                sliders[lane] = slider
+                h.addWidget(slider)
+                if extra:
+                    self.mixer_extras.append(slider)
+            self.pan_sliders[lane].setObjectName("pan")
+            h.addStretch()
+            self.headers.append(header)
             row.addWidget(header)
             timeline_row = TimelineRow(self, lane)
             timeline_row.clicked.connect(self.timeline_clicked)
             self.rows[lane] = timeline_row
             row.addWidget(timeline_row, 1)
             grid.addLayout(row)
+        self.show_mixer(False)
         return grid
+
+    def show_mixer(self, shown):
+        """Montre ou cache les réglages ◀ ▶ et Écho (pour garder la fenêtre simple)."""
+        for widget in self.mixer_extras:
+            widget.setVisible(shown)
+        width = CHIP_W + INSTRUMENT_W + MUTE_W + SOLO_W + KNOB_W + 4 * GAP + (2 * (KNOB_W + GAP) if shown else 0) + 8
+        for header in self.headers:
+            header.setFixedWidth(width)
 
     def build_editor_bar(self):
         bar = QHBoxLayout()
@@ -711,22 +781,27 @@ class Studio(QWidget):
 
     # ---------- affichage ----------
     def refresh_all(self):
-        for widget in (self.tempo, self.key, self.swing, self.human):
+        for widget in (self.tempo, self.tempo_slider, self.key, self.swing, self.human):
             widget.blockSignals(True)
         self.tempo.setValue(self.project["tempo"])
+        self.tempo_slider.setValue(self.project["tempo"])
         self.key.setCurrentIndex(self.project["key"])
         self.swing.setValue(self.project.get("swing", 0))
         self.human.setValue(self.project.get("humain", m.DEFAULT_HUMAN))
-        for widget in (self.tempo, self.key, self.swing, self.human):
+        for widget in (self.tempo, self.tempo_slider, self.key, self.swing, self.human):
             widget.blockSignals(False)
         self.human_label.setText(f"Humain {self.project.get('humain', m.DEFAULT_HUMAN)} %")
         self.swing_label.setText(f"Swing {self.project.get('swing', 0)} %")
         self.update_undo_buttons()
         for lane in m.LANES:
             data = self.project["lanes"][lane]
+            mix = m.mixer_defaults(lane)
             for widget, setter, value in [(self.instrument_boxes[lane], "setCurrentIndex", data["instrument"]),
-                                          (self.mute_buttons[lane], "setChecked", data["muted"]),
-                                          (self.volume_sliders[lane], "setValue", data["volume"])]:
+                                          (self.mute_buttons[lane], "setChecked", data.get("muted", False)),
+                                          (self.solo_buttons[lane], "setChecked", data.get("solo", False)),
+                                          (self.volume_sliders[lane], "setValue", data.get("volume", mix["volume"])),
+                                          (self.pan_sliders[lane], "setValue", data.get("pan", mix["pan"])),
+                                          (self.echo_sliders[lane], "setValue", data.get("echo", mix["echo"]))]:
                 widget.blockSignals(True)
                 getattr(widget, setter)(value)
                 widget.blockSignals(False)
@@ -962,14 +1037,19 @@ class Studio(QWidget):
 
     # ---------- réglages ----------
     def set_tempo(self, value):
-        position = self.current_step_float() if self.playing else 0
+        """Change le tempo, même pendant la lecture, sans arrêt ni saut : la prochaine note pas encore programmée
+        garde son moment, et les suivantes s'espacent avec le nouveau tempo."""
+        self.rebase_tempo(self.step_ms(), value)
         self.project["tempo"] = value
-        if self.playing:  # garde la position actuelle avec le nouveau tempo
-            now = self.engine.now()
-            self.engine.stop()
-            self.start_tick = now - position * self.step_ms()
-            self.next_step = int(position) + 1
+        self.tempo_slider.blockSignals(True)
+        self.tempo_slider.setValue(value)
+        self.tempo_slider.blockSignals(False)
         self.changed()
+
+    def rebase_tempo(self, old_step_ms, tempo):
+        if self.playing:
+            anchor = self.start_tick + self.next_step * old_step_ms  # moment du prochain pas à programmer
+            self.start_tick = anchor - self.next_step * 60000 / tempo / 4
 
     def set_key(self, index):
         self.project["key"] = index
@@ -981,10 +1061,26 @@ class Studio(QWidget):
         self.apply_instruments()
         self.changed()
 
+    # ---------- table de mixage ----------
     def set_volume(self, lane, value):
-        self.lane_data(lane)["volume"] = value
-        self.apply_instruments()
+        self.set_mix(lane, "volume", value)
+
+    def set_pan(self, lane, value):
+        self.set_mix(lane, "pan", value)
+
+    def set_echo(self, lane, value):
+        self.set_mix(lane, "echo", value)
+
+    def set_mix(self, lane, name, value):
+        """Un curseur de la table de mixage : appliqué tout de suite, même pendant la lecture."""
+        self.lane_data(lane)[name] = value
+        self.mix_lane(lane)
         self.changed()
+
+    def mix_lane(self, lane):
+        channel = m.LANE_INFO[lane][1]
+        if channel not in self.silencing:  # une ligne en train d'être coupée garde le silence
+            self.engine.mix(channel, *m.lane_mix(self.project, lane))
 
     def set_human(self, value):
         self.project["humain"] = value
@@ -997,22 +1093,58 @@ class Studio(QWidget):
         self.changed()
 
     def set_muted(self, lane, muted):
+        before = self.audible_lanes()
         self.lane_data(lane)["muted"] = muted
+        self.audibility_changed(before)
+
+    def set_solo(self, lane, solo):
+        before = self.audible_lanes()
+        self.lane_data(lane)["solo"] = solo
+        self.audibility_changed(before)
+
+    def audible_lanes(self):
+        return {lane for lane in m.LANES if m.audible(self.project, lane)}
+
+    def audibility_changed(self, before):
+        """🔇 / ⭐ Solo pendant que le morceau joue : effet immédiat.
+        - une ligne coupée se tait tout de suite, même les notes déjà programmées (200 ms d'avance) ;
+        - une ligne qui revient rejoue tout de suite les notes des 200 ms déjà programmées pour les autres."""
         self.changed()
         self.update_views()
+        if self.playing != "song":
+            return
+        self.compile()
+        after = self.audible_lanes()
+        for lane in m.LANES:
+            channel = m.LANE_INFO[lane][1]
+            if lane in before and lane not in after:
+                self.silence_count += 1
+                self.silencing[channel] = (self.silence_count, self.next_step)
+                self.engine.silence(channel)
+                QTimer.singleShot(LOOKAHEAD_MS + 60, lambda l=lane, c=channel, n=self.silence_count: self.end_silence(l, c, n))
+            elif lane in after and lane not in before:
+                first = math.floor((self.engine.now() - self.start_tick) / self.step_ms()) + 1
+                if channel in self.silencing:  # coupée il y a moins de 200 ms : ses notes déjà programmées rejouent
+                    first = max(first, self.silencing.pop(channel)[1])
+                    self.mix_lane(lane)
+                self.schedule_steps(range(first, self.next_step), channel)
+
+    def end_silence(self, lane, channel, number):
+        """Les notes programmées avant la coupure sont passées : on remet le canal en état de jouer
+        (pour le jeu au clavier ou quand la ligne reviendra)."""
+        if self.silencing.get(channel, (None,))[0] != number:
+            return
+        self.engine.silence(channel)
+        del self.silencing[channel]
+        self.mix_lane(lane)
 
     def channels(self):
-        result = {}
-        for lane in m.LANES:
-            data = self.lane_data(lane)
-            instruments = m.INSTRUMENTS[lane]
-            _, bank, program, soundfont, gain_db = instruments[min(data["instrument"], len(instruments) - 1)]
-            volume = max(1, min(127, round(data["volume"] * 10 ** (gain_db / 40))))  # le volume MIDI suit 40·log10
-            result[m.LANE_INFO[lane][1]] = (bank, program, volume, soundfont, m.LANE_FX[lane])
-        return result
+        return m.channels(self.project)
 
     def apply_instruments(self):
         self.engine.setup(self.channels())
+        for channel in self.silencing:
+            self.engine.silence(channel)
 
     # ---------- lecture ----------
     def changed(self):
@@ -1038,7 +1170,9 @@ class Studio(QWidget):
             self.redo_btn.setEnabled(bool(self.redo_stack))
 
     def restore_state(self, state):
+        old_step_ms = self.step_ms()
         self.project = json.loads(state)
+        self.rebase_tempo(old_step_ms, self.project["tempo"])  # pendant la lecture, pas de saut
         self.snapshot, self.last_change = state, 0.0
         for lane in m.LANES:
             count = len(self.project["lanes"][lane]["patterns"])
@@ -1064,7 +1198,7 @@ class Studio(QWidget):
             return None
         try:
             return m.load(AUTOSAVE)
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             # Sauvegarde abîmée : on la met de côté (pour papa) au lieu de l'écraser, et on prévient
             broken = AUTOSAVE.with_name(f"sauvegarde-abimee-{clock.strftime('%Y%m%d-%H%M%S')}.json")
             try:
@@ -1154,16 +1288,24 @@ class Studio(QWidget):
             self.compile()
         now = self.engine.now()
         step_ms = self.step_ms()
-        swing, human = self.project.get("swing", 0), self.project.get("humain", m.DEFAULT_HUMAN)
         while self.start_tick + self.next_step * step_ms < now + LOOKAHEAD_MS:
-            time = self.start_tick + self.next_step * step_ms
-            step = self.next_step % self.loop_steps
-            for hit in self.events.get(step, []):
-                gap = self.gaps.get((step, hit[0], hit[1]))
-                offset, velocity, duration = m.perform(self.next_step, hit, gap, swing, step_ms, human)
-                self.engine.note_at(max(self.engine.now(), time + offset), hit[0], hit[1], velocity, duration)
+            self.schedule_steps([self.next_step])
             self.next_step += 1
         self.update_views()
+
+    def schedule_steps(self, steps, channel=None):
+        """Programme les notes de ces pas (comptés depuis le début de la lecture), éventuellement d'un seul canal."""
+        step_ms = self.step_ms()
+        swing, human = self.project.get("swing", 0), self.project.get("humain", m.DEFAULT_HUMAN)
+        for absolute in steps:
+            time = self.start_tick + absolute * step_ms
+            step = absolute % self.loop_steps
+            for hit in self.events.get(step, []):
+                if channel is not None and hit[0] != channel:
+                    continue
+                gap = self.gaps.get((step, hit[0], hit[1]))
+                offset, velocity, duration = m.perform(absolute, hit, gap, swing, step_ms, human)
+                self.engine.note_at(max(self.engine.now(), time + offset), hit[0], hit[1], velocity, duration)
 
     # ---------- jeu au clavier ----------
     def eventFilter(self, obj, event):
@@ -1405,6 +1547,14 @@ class Studio(QWidget):
         QMessageBox.information(self, "Mon Studio", f"💾 « {name} » est enregistré !")
 
     def export_song(self):
+        # Ce qu'on entend, c'est ce qu'on exporte : on prévient si des lignes sont coupées (🔇 ou pas en ⭐ Solo)
+        silent = [m.LANE_INFO[lane][0] for lane in m.LANES
+                  if not m.audible(self.project, lane) and any(self.lane_data(lane)["song"])]
+        if silent:
+            answer = QMessageBox.question(self, "Mon Studio", f"Attention, on n'entend pas : {', '.join(silent)}.\n"
+                                          "Elles ne seront pas dans ton morceau. Exporter quand même ?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         name = self.ask_name("Comment s'appelle ton morceau ? Il ira dans Mixxx !", mp3=True)
         if not name or getattr(self, "exporter", None):
             return
