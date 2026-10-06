@@ -12,7 +12,7 @@ import time as clock
 from pathlib import Path
 
 from PyQt6.QtCore import QEvent, QRectF, QSize, Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout,
                              QInputDialog, QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox,
                              QVBoxLayout, QWidget)
@@ -104,33 +104,121 @@ def row_key(lane, row):
         return TOP_LETTERS[row - 7]
     return ""
 
+# --- Thème néon (fond sombre, couleurs vives, comme dans un jeu vidéo) ---
+NEON = {
+    "fond": "#120f2b",        # fond de la fenêtre
+    "panneau": "#1c1940",     # boîtes de dialogue, menus, panneau des défis
+    "case": "#272352",        # listes déroulantes, cases à remplir, boutons secondaires
+    "case_survol": "#332e6b",
+    "bord": "#453f85",
+    "texte": "#f4f2ff",       # texte principal, bien blanc
+    "texte_doux": "#bdb8e8",  # texte d'aide, encore très lisible sur le fond
+    "texte_sombre": "#14112b",  # texte posé sur les couleurs néon
+    "cyan": "#22e4ff",
+    "rose": "#ff3d8b",
+    "jaune": "#ffd23f",
+    "vert": m.LANE_INFO["melodie"][2],
+    "orange": m.LANE_INFO["batterie"][2],
+    "violet": m.LANE_INFO["basse"][2],
+    "bleu": m.LANE_INFO["accords"][2],
+}
+
 STYLE = """
-QWidget { font-size: 15px; }
-QPushButton { font-size: 15px; font-weight: bold; padding: 8px 14px; border-radius: 12px;
-              background: #4a90e2; color: white; border: none; }
-QPushButton:hover { background: #357abd; }
-QPushButton:checked { background: #1a3d66; }
-QPushButton#play { background: #43a047; font-size: 20px; min-width: 130px; }
-QPushButton#play:checked { background: #e53935; }
-QPushButton#light { background: #eef4fc; color: #1a3d66; border: 2px solid #4a90e2; }
-QPushButton#light:hover { background: #d6e6fa; }
-QPushButton#mute { background: #ddd; color: #333; padding: 4px 8px; }
-QPushButton#mute:checked { background: #e53935; color: white; }
-QPushButton#chip { background: white; color: #1a1a1a; border: 2px solid #bbb; padding: 6px 12px; }
-QPushButton#chip:checked { border: 3px solid #1a3d66; background: #fff8d6; }
-QLabel#title { font-size: 22px; font-weight: bold; color: #4a90e2; }
-QLabel#lane { font-size: 17px; font-weight: bold; }
-QLabel#help { color: #555; font-size: 14px; }
-QComboBox, QSpinBox { font-size: 15px; padding: 4px 8px; }
-QFrame#defis { background: #fff8d6; border: 2px solid #f0c040; border-radius: 16px; }
-QFrame#defis QLabel { background: transparent; color: #1a1a1a; }
-QLabel#defi_title { font-size: 20px; font-weight: bold; color: #1a3d66; }
-QLabel#defi_text { font-size: 15px; color: #222; }
-QLabel#feedback { font-size: 17px; font-weight: bold; padding: 8px; border-radius: 10px; }
-QPushButton#check { background: #43a047; font-size: 18px; }
-QPushButton#next { background: #ff9800; font-size: 17px; }
-QListWidget { font-size: 15px; border-radius: 10px; }
-"""
+QWidget {{ font-size: 15px; color: {texte}; }}
+QWidget#studio {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #17113a, stop:1 #0b1830); }}
+QDialog, QMessageBox, QInputDialog, QProgressDialog {{ background: {panneau}; }}
+QLabel {{ background: transparent; }}
+
+QPushButton {{ font-size: 15px; font-weight: bold; padding: 8px 16px; border-radius: 14px;
+              background: {cyan}; color: {texte_sombre}; border: 2px solid #8ff2ff; }}
+QPushButton:hover {{ background: #7aefff; }}
+QPushButton:pressed {{ background: #12b8d4; }}
+QPushButton:checked {{ background: {rose}; color: white; border-color: #ff9cc4; }}
+QPushButton:disabled {{ background: #2a2750; color: #8984b8; border-color: #3a3570; }}
+QPushButton::menu-indicator {{ subcontrol-position: right center; right: 6px; }}
+QPushButton#play {{ background: {vert}; border-color: #8ff0b8; font-size: 21px; min-width: 140px; }}
+QPushButton#play:hover {{ background: #5fe39a; }}
+QPushButton#play:checked {{ background: {rose}; color: white; border-color: #ff9cc4; }}
+QPushButton#light {{ background: {case}; color: {texte}; border: 2px solid {cyan}; }}
+QPushButton#light:hover {{ background: {case_survol}; border-color: #8ff2ff; }}
+QPushButton#light:disabled {{ background: #1f1c42; color: #7c77ab; border-color: #3a3570; }}
+QPushButton#mute {{ background: {case}; color: {texte}; border: 2px solid {bord}; padding: 4px 8px; border-radius: 10px; }}
+QPushButton#mute:checked {{ background: {rose}; border-color: #ff9cc4; }}
+QPushButton#chip {{ background: {case}; color: {texte}; border: 2px solid {bord}; padding: 6px 12px; }}
+QPushButton#chip:hover {{ background: {case_survol}; }}
+QPushButton#chip:checked {{ background: #3a3470; color: white; border: 3px solid {jaune}; }}
+QPushButton#check {{ background: {vert}; border-color: #8ff0b8; font-size: 18px; }}
+QPushButton#check:hover {{ background: #5fe39a; }}
+QPushButton#next {{ background: {jaune}; border-color: #ffe78f; color: {texte_sombre}; font-size: 17px; }}
+QPushButton#next:hover {{ background: #ffe07a; }}
+QPushButton#next:checked {{ background: {orange}; border-color: #ffc59b; color: {texte_sombre}; }}
+QPushButton#record:checked {{ background: #ff4040; color: white; border-color: #ff9c9c; }}
+
+QLabel#title {{ font-size: 24px; font-weight: bold; color: {cyan}; }}
+QLabel#lane {{ font-size: 18px; font-weight: bold; color: {jaune}; }}
+QLabel#help {{ color: {texte_doux}; font-size: 14px; }}
+
+QComboBox, QSpinBox, QLineEdit {{ font-size: 15px; padding: 4px 8px; background: {case}; color: {texte};
+                                  border: 2px solid {bord}; border-radius: 10px;
+                                  selection-background-color: {cyan}; selection-color: {texte_sombre}; }}
+QComboBox:hover, QSpinBox:hover, QLineEdit:hover, QComboBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {cyan}; }}
+QComboBox:disabled, QSpinBox:disabled {{ color: #8984b8; border-color: #34306a; }}
+QComboBox::drop-down {{ border: none; width: 22px; background: transparent; }}
+QComboBox::down-arrow {{ image: url({icones}/bas.svg); width: 12px; height: 8px; }}
+QSpinBox::up-button, QSpinBox::down-button {{ width: 26px; border: none; background: transparent; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {case_survol}; border-radius: 6px; }}
+QSpinBox::up-arrow {{ image: url({icones}/haut.svg); width: 12px; height: 8px; }}
+QSpinBox::down-arrow {{ image: url({icones}/bas.svg); width: 12px; height: 8px; }}
+QComboBox QAbstractItemView {{ background: {panneau}; color: {texte}; border: 2px solid {cyan}; border-radius: 8px;
+                               outline: none; padding: 4px; selection-background-color: {cyan};
+                               selection-color: {texte_sombre}; }}
+
+QSlider::groove:horizontal {{ height: 8px; border-radius: 4px; background: #2e2a5c; }}
+QSlider::sub-page:horizontal {{ border-radius: 4px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 {violet}, stop:1 {cyan}); }}
+QSlider::handle:horizontal {{ width: 20px; height: 20px; margin: -7px 0; border-radius: 10px;
+                              background: {jaune}; border: 2px solid #fff3c4; }}
+
+QMenu {{ background: {panneau}; color: {texte}; border: 2px solid {cyan}; border-radius: 10px; padding: 6px; }}
+QMenu::item {{ padding: 8px 22px; border-radius: 8px; font-size: 15px; }}
+QMenu::item:selected {{ background: {cyan}; color: {texte_sombre}; }}
+QToolTip {{ background: {panneau}; color: {texte}; border: 2px solid {jaune}; border-radius: 6px; padding: 6px;
+            font-size: 14px; }}
+
+QScrollArea {{ background: transparent; border: none; }}
+QScrollArea#chips > QWidget > QWidget {{ background: transparent; }}
+QScrollArea#grid {{ border: 2px solid {bord}; border-radius: 14px; background: #161334; }}
+QScrollBar:horizontal, QScrollBar:vertical {{ background: transparent; border: none; margin: 2px; }}
+QScrollBar:horizontal {{ height: 12px; }}
+QScrollBar:vertical {{ width: 12px; }}
+QScrollBar::handle:horizontal, QScrollBar::handle:vertical {{ background: #5a529e; border-radius: 4px;
+                                                              min-width: 30px; min-height: 30px; }}
+QScrollBar::handle:hover {{ background: {cyan}; }}
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{ width: 0; height: 0; background: none; }}
+
+QProgressBar {{ background: {case}; color: {texte}; border: 2px solid {bord}; border-radius: 10px;
+                text-align: center; font-weight: bold; min-height: 24px; }}
+QProgressBar::chunk {{ border-radius: 8px; background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                       stop:0 #7b3fe0, stop:1 #e0287a); }}
+
+QFrame#defis {{ background: {panneau}; border: 3px solid {jaune}; border-radius: 18px; }}
+QFrame#defis QLabel {{ background: transparent; color: {texte}; }}
+QFrame#defis QLabel#title {{ color: {jaune}; }}
+QLabel#defi_title {{ font-size: 20px; font-weight: bold; color: {cyan}; }}
+QLabel#defi_text {{ font-size: 15px; color: {texte}; }}
+QLabel#feedback {{ font-size: 17px; font-weight: bold; padding: 8px; border-radius: 10px; }}
+QListWidget {{ font-size: 15px; background: #141131; color: {texte}; border: 2px solid {bord}; border-radius: 12px;
+               padding: 2px; outline: none; }}
+QListWidget::item {{ padding: 0 4px; border-radius: 8px; }}
+QListWidget::item:hover {{ background: {case_survol}; }}
+QListWidget::item:selected {{ background: {cyan}; color: {texte_sombre}; }}
+""".format(icones=(Path(__file__).resolve().parent / "icones").as_posix(), **NEON)
+
+# Couleurs des messages du panneau des défis : (fond sombre teinté, texte clair, bordure)
+FEEDBACK = {True: ("#14432b", "#c9ffe0", NEON["vert"]),
+            False: ("#4a2412", "#ffe0c9", NEON["orange"]),
+            "hint": ("#152f55", "#d6e8ff", NEON["bleu"]),
+            None: ("transparent", NEON["texte"], "transparent")}
 
 
 def lane_color(lane, index=0):
@@ -139,15 +227,35 @@ def lane_color(lane, index=0):
     return color.lighter(100 + (index % 4) * 18)
 
 
+def text_on(color):
+    """Texte blanc ou sombre : celui qui se lit le mieux sur cette couleur."""
+    luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+    return QColor(NEON["texte_sombre"] if luminance > 140 else "white")
+
+
 def short_name(pattern):
     return pattern["name"].split(" · ")[0]
 
 
-def apply_light_theme(app):
-    """Toujours le même thème clair et coloré, même si le bureau est en thème sombre
-    (sinon du texte blanc par défaut se retrouve sur nos fonds clairs)."""
+def apply_theme(app):
+    """Toujours le même thème néon sombre, quel que soit le thème du bureau.
+    La palette sert aux fenêtres que la feuille de style ne couvre pas (choix de fichier…)."""
     app.setStyle("Fusion")
-    app.setPalette(app.style().standardPalette())
+    palette = QPalette()
+    role = QPalette.ColorRole
+    colors = {role.Window: NEON["fond"], role.WindowText: NEON["texte"], role.Base: "#141131",
+              role.AlternateBase: NEON["panneau"], role.Text: NEON["texte"], role.Button: NEON["case"],
+              role.ButtonText: NEON["texte"], role.ToolTipBase: NEON["panneau"], role.ToolTipText: NEON["texte"],
+              role.Highlight: NEON["cyan"], role.HighlightedText: NEON["texte_sombre"],
+              role.PlaceholderText: NEON["texte_doux"], role.Link: NEON["cyan"], role.BrightText: "white",
+              role.Light: NEON["case_survol"], role.Midlight: NEON["bord"], role.Mid: NEON["bord"],
+              role.Dark: "#0b0920", role.Shadow: "#000000"}
+    for r, color in colors.items():
+        palette.setColor(r, QColor(color))
+    for r in (role.WindowText, role.Text, role.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, r, QColor("#8984b8"))
+    app.setPalette(palette)
+    app.setStyleSheet(STYLE)
 
 
 # --- Ligne de temps (une rangée par instrument) ---
@@ -180,20 +288,23 @@ class TimelineRow(QWidget):
         lane_data = self.studio.project["lanes"][self.lane]
         w = self.width() / m.SONG_BARS
         selected = self.lane == self.studio.lane
-        painter.fillRect(self.rect(), QColor("#fffbe8" if selected else "#f4f4f4"))
-        for bar in range(m.SONG_BARS):
-            painter.setPen(QPen(QColor("#ccc"), 1))
-            painter.drawLine(int(bar * w), 0, int(bar * w), self.height())
+        painter.setPen(QPen(QColor(m.LANE_INFO[self.lane][2]) if selected else QColor(NEON["bord"]), 2))
+        painter.setBrush(QColor("#2a2558" if selected else "#191638"))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 12, 12)
+        for bar in range(1, m.SONG_BARS):
+            painter.setPen(QPen(QColor("#3b3672" if bar % 4 else "#5a529e"), 1))
+            painter.drawLine(int(bar * w), 6, int(bar * w), self.height() - 6)
             cell = lane_data["song"][bar]
             if not cell or cell[0] >= len(lane_data["patterns"]):
                 continue
             pattern = lane_data["patterns"][cell[0]]
             rect = QRectF(bar * w + 2, 6, w - 4, self.height() - 12)
-            painter.setBrush(lane_color(self.lane, cell[0]).darker(130 if lane_data["muted"] else 100))
-            painter.setPen(Qt.PenStyle.NoPen)
+            fill = lane_color(self.lane, cell[0]).darker(170 if lane_data["muted"] else 100)
+            painter.setBrush(fill)
+            painter.setPen(QPen(fill.lighter(140), 2))  # petit liseré lumineux, façon néon
             painter.drawRoundedRect(rect, 8, 8)
             if cell[1] == 0:  # nom du motif sur sa première mesure
-                painter.setPen(QColor("white"))
+                painter.setPen(text_on(fill))
                 painter.setFont(QFont(self.font().family(), 13, QFont.Weight.Bold))
                 painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, short_name(pattern))
         self.studio.draw_playhead(painter, self.width(), self.height())
@@ -213,8 +324,9 @@ class BarNumbers(QWidget):
     def paintEvent(self, _):
         painter = QPainter(self)
         w = self.width() / m.SONG_BARS
-        painter.setPen(QColor("#666"))
+        painter.setFont(QFont(self.font().family(), 11, QFont.Weight.Bold))
         for bar in range(m.SONG_BARS):
+            painter.setPen(QColor(NEON["cyan"] if bar % 4 == 0 else NEON["texte_doux"]))
             painter.drawText(QRectF(bar * w, 0, w, self.height()), Qt.AlignmentFlag.AlignCenter, str(bar + 1))
         self.studio.draw_playhead(painter, self.width(), self.height())
 
@@ -284,9 +396,10 @@ class GridEditor(QWidget):
     def paintEvent(self, _):
         pattern = self.studio.current_pattern()
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("white"))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor("#161334"))
         if not pattern:
-            painter.setPen(QColor("#888"))
+            painter.setPen(QColor(NEON["texte_doux"]))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
                              "Choisis un motif tout prêt avec « ✨ Motifs prêts », ou crée-en un avec « ➕ Nouveau ».")
             return
@@ -300,13 +413,14 @@ class GridEditor(QWidget):
         for r in range(rows):
             y = r * rh
             row = rows - 1 - r
-            background = "#ffd54f" if row in held else ("#f0f0f0" if r % 2 else "#e6e6e6")
+            pressed = row in held  # touche enfoncée : la ligne s'allume en jaune
+            background = NEON["jaune"] if pressed else ("#221e4a" if r % 2 else "#2a2556")
             painter.fillRect(QRectF(0, y, self.LABEL_W, rh), QColor(background))
             key = row_key(lane, row)
-            painter.setPen(QColor("#4a90e2"))
+            painter.setPen(QColor(NEON["texte_sombre"] if pressed else NEON["cyan"]))
             painter.setFont(QFont(self.font().family(), 10, QFont.Weight.Bold))
             painter.drawText(QRectF(8, y, 22, rh), Qt.AlignmentFlag.AlignVCenter, key)
-            painter.setPen(QColor("#333"))
+            painter.setPen(QColor(NEON["texte_sombre"] if pressed else NEON["texte"]))
             painter.setFont(self.font())
             painter.drawText(QRectF(30, y, self.LABEL_W - 32, rh), Qt.AlignmentFlag.AlignVCenter, labels[r])
         if lane == "accords":
@@ -317,25 +431,30 @@ class GridEditor(QWidget):
         for c in range(columns):
             x = self.LABEL_W + c * col_w
             for r in range(rows):
-                rect = QRectF(x + 1, r * rh + 1, col_w - 2, rh - 2)
+                rect = QRectF(x + 2, r * rh + 2, col_w - 4, rh - 4)
                 if (r, c) in lit:
                     accent = None if lane == "accords" else m.accent_of(pattern, rows - 1 - r, c)
                     fill = color.darker(140) if accent == "fort" else color.lighter(155) if accent == "doux" else color
-                    painter.fillRect(rect, fill)
+                    painter.setBrush(fill)
+                    painter.setPen(QPen(QColor("white") if accent == "fort" else fill.lighter(135), 2))
+                    painter.drawRoundedRect(rect, 6, 6)
                     if accent:
-                        painter.setPen(QColor("white" if accent == "fort" else "#555"))
+                        painter.setPen(text_on(fill))
                         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "▲" if accent == "fort" else "▽")
                 else:
-                    shade = "#fafafa" if (c // per_beat) % 2 == 0 else "#efefef"
-                    painter.fillRect(rect, QColor(shade))
+                    shade = "#2b2758" if (c // per_beat) % 2 == 0 else "#221f48"
+                    painter.setBrush(QColor(shade))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawRoundedRect(rect, 6, 6)
             bar_line = c % (m.BEATS_PER_BAR if lane == "accords" else m.STEPS_PER_BAR) == 0
-            painter.setPen(QPen(QColor("#555" if bar_line else "#ccc"), 2 if bar_line else 1))
-            painter.drawLine(int(x), 0, int(x), rows * rh)
+            if bar_line:  # trait lumineux au début de chaque mesure
+                painter.setPen(QPen(QColor(NEON["cyan"]), 2))
+                painter.drawLine(int(x), 0, int(x), rows * rh)
         # tête de lecture dans le motif
         step = self.studio.pattern_play_step()
         if step is not None:
             x = self.LABEL_W + (step / (4 if lane == "accords" else 1)) * col_w
-            painter.setPen(QPen(QColor("#e53935"), 3))
+            painter.setPen(QPen(QColor(NEON["rose"]), 3))
             painter.drawLine(int(x), 0, int(x), rows * rh)
 
 
@@ -425,9 +544,9 @@ class DefiPanel(QFrame):
         self.set_feedback("💡 " + defis.DEFIS[self.index]["indice"], "hint")
 
     def set_feedback(self, text, state):
-        colors = {True: "#c8f0c8", False: "#ffe0cc", "hint": "#ddeeff", None: "transparent"}
+        background, color, border = FEEDBACK[state]
         self.feedback.setText(text)
-        self.feedback.setStyleSheet(f"background: {colors[state]}; color: #1a1a1a;")
+        self.feedback.setStyleSheet(f"background: {background}; color: {color}; border: 2px solid {border};")
 
 
 # --- Fenêtre principale ---
@@ -466,7 +585,8 @@ class Studio(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🎛 Mon Studio")
-        self.setStyleSheet(STYLE)
+        self.setObjectName("studio")  # fond en dégradé (thème néon)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         self.resize(1500, 920)
         self.engine = moteur.Engine()
         self.project = self.restore_autosave() or m.STYLES["Hip-hop chill"]()
@@ -507,6 +627,7 @@ class Studio(QWidget):
         root.addLayout(self.build_editor_bar())
         self.grid = GridEditor(self)
         self.grid_scroll = QScrollArea()
+        self.grid_scroll.setObjectName("grid")
         self.grid_scroll.setWidget(self.grid)
         self.grid_scroll.setWidgetResizable(True)  # la grille remplit la largeur, et défile si elle est plus grande
         root.addWidget(self.grid_scroll, 1)
@@ -621,6 +742,7 @@ class Studio(QWidget):
             label.setObjectName("chip")
             label.setCheckable(True)
             label.setFixedWidth(130)
+            label.setStyleSheet(f"QPushButton {{ border-left: 8px solid {m.LANE_INFO[lane][2]}; }}")
             label.clicked.connect(lambda _, l=lane: self.select_lane(l))
             self.lane_labels[lane] = label
             h.addWidget(label)
@@ -661,6 +783,7 @@ class Studio(QWidget):
         self.chips_box = QHBoxLayout(self.chips_widget)
         self.chips_box.setContentsMargins(0, 0, 0, 0)
         chips_scroll = QScrollArea()
+        chips_scroll.setObjectName("chips")
         chips_scroll.setWidget(self.chips_widget)
         chips_scroll.setWidgetResizable(True)
         chips_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -700,7 +823,7 @@ class Studio(QWidget):
         self.record_btn = QPushButton("⏺ Enregistrer")
         self.record_btn.setCheckable(True)
         self.record_btn.setToolTip("Joue avec le clavier : tes notes s'inscrivent dans le motif")
-        self.record_btn.setStyleSheet("QPushButton:checked { background: #e53935; }")
+        self.record_btn.setObjectName("record")
         self.record_btn.clicked.connect(self.toggle_record)
         bar.addWidget(self.record_btn)
         self.loop_btn = QPushButton("🔁 Écouter ce motif")
@@ -790,7 +913,7 @@ class Studio(QWidget):
             return
         step = self.current_step()
         x = width * step / (m.SONG_BARS * m.STEPS_PER_BAR)
-        painter.setPen(QPen(QColor("#e53935"), 3))
+        painter.setPen(QPen(QColor(NEON["rose"]), 3))
         painter.drawLine(int(x), 0, int(x), height)
 
     # ---------- motifs ----------
@@ -1452,7 +1575,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setApplicationName("Mon Studio")
     app.setDesktopFileName("mon-studio")
-    apply_light_theme(app)
+    apply_theme(app)
     app.setFont(QFont(app.font().family(), 11))
     window = Studio()
     window.showMaximized()
