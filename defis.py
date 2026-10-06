@@ -55,6 +55,7 @@ def loop_events(project, patterns):
     for lane in m.LANES:
         lane_data = preview["lanes"][lane]
         lane_data["song"] = [None] * m.SONG_BARS
+        lane_data["solo"] = False
         if lane in patterns:
             lane_data["patterns"] = [patterns[lane]]
             lane_data["muted"] = False
