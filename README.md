@@ -9,7 +9,6 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 - **4 lignes** : 🥁 Batterie, 🎸 Basse, 🎹 Accords, 🎵 Mélodie.
 - Chaque ligne a ses **motifs** (A, B, C…), qu'on édite sur une grille en bas de la fenêtre.
 - En haut, une **ligne de temps** de 16 mesures : pour chaque ligne et chaque mesure, on choisit quel motif joue.
-- Un **thème néon** façon jeu vidéo : fond sombre, couleurs vives, gros boutons arrondis — le même quel que soit le thème du bureau.
 
 ## Fait pour ne pas jouer faux
 
