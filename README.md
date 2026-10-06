@@ -22,6 +22,7 @@ Une appli de bureau toute simple pour composer un morceau, pensée pour les enfa
 ## Pour démarrer vite
 
 - **✨ Motifs prêts** : boom bap, pop rock, électro, funk, reggaeton, trap, roulements… ; suites d'accords pop, épique, émotion, jazz… ; basses et mélodies.
+- **🎲 Au hasard** : remplit le motif choisi avec une idée qui sonne bien (batterie, basse, suite d'accords ou mélodie dans la gamme), une nouvelle à chaque clic ; ↩ Annuler pour revenir en arrière.
 - **🎁 Morceaux prêts** : Hip-hop chill, Pop joyeuse, Électro, Reggaeton.
 - **🔁 Écouter ce motif** fait tourner le motif en boucle pendant qu'on le modifie.
 

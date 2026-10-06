@@ -439,6 +439,168 @@ def compile_pattern(project, lane, pattern):
     return events
 
 
+# --- 🎲 Au hasard : un motif qui sonne bien, en un clic ---
+# Suites d'accords : depuis chaque degré, les accords qui sonnent bien juste après (avec leur poids).
+# En majeur on évite le 7e degré (diminué) ; en mineur, le 2e.
+CHORD_MOVES = {
+    "majeur": {0: {3: 3, 4: 3, 5: 3, 1: 1}, 1: {4: 4, 3: 1}, 2: {5: 3, 3: 2}, 3: {0: 2, 4: 3, 1: 1, 5: 1},
+               4: {0: 3, 5: 3, 3: 1}, 5: {3: 3, 1: 2, 4: 2, 2: 1}},
+    "mineur": {0: {5: 3, 3: 3, 6: 2, 2: 1, 4: 1}, 2: {5: 2, 3: 2, 6: 2}, 3: {0: 2, 4: 2, 6: 2, 5: 1},
+               4: {0: 3, 5: 2}, 5: {6: 3, 3: 2, 2: 2, 0: 1}, 6: {0: 2, 2: 3, 5: 2}},
+}
+CHORD_STARTS = (0, 5)          # on commence sur le I ou le vi (en mineur : le i ou le VI)
+CHORD_ENDS = (0, 3, 4, 5)      # on finit sur un accord qui relance bien la boucle
+# Rythmes d'une mesure pour la basse et la mélodie : (premier pas, longueur)
+BASS_RHYTHMS = [
+    [(0, 16)], [(0, 8), (8, 8)], [(0, 3), (4, 3), (8, 3), (12, 3)], [(0, 2), (4, 2), (8, 2), (12, 2)],
+    [(0, 3), (3, 3), (6, 2), (8, 3), (11, 3), (14, 2)], [(0, 2), (3, 1), (6, 2), (8, 2), (10, 2), (14, 2)],
+    [(0, 6), (6, 2), (8, 6), (14, 2)], [(0, 1), (2, 1), (4, 1), (6, 1), (8, 1), (10, 1), (12, 1), (14, 1)],
+]
+MELODY_RHYTHMS = [
+    [(0, 4), (4, 4), (8, 4), (12, 4)], [(0, 2), (2, 2), (4, 4), (8, 2), (10, 2), (12, 4)],
+    [(0, 6), (6, 2), (8, 8)], [(0, 3), (3, 3), (6, 2), (8, 4), (12, 4)], [(0, 8), (8, 4), (12, 4)],
+    [(0, 2), (2, 2), (4, 2), (6, 2), (8, 6)], [(2, 2), (4, 4), (8, 2), (10, 2), (12, 4)],
+    [(0, 4), (6, 2), (8, 2), (10, 2), (12, 4)],
+]
+
+
+def pick(rng, weights):
+    """Choix au hasard dans {valeur: poids}."""
+    values = list(weights)
+    return rng.choices(values, [weights[v] for v in values])[0]
+
+
+def chord_rows(degree):
+    """Lignes de la mélodie (0-14) qui sont des notes de l'accord de ce degré."""
+    return [r for r in range(MELODY_ROWS) if (r - degree) % 7 in (0, 2, 4)]
+
+
+def placed_chords(project, lane, pattern):
+    """Degré d'accord pour chaque pas du motif, là où il est placé pour la première fois dans le morceau
+    (sinon, on suppose l'accord de la tonique tout du long)."""
+    lane_data = project["lanes"][lane]
+    index = next((i for i, p in enumerate(lane_data["patterns"]) if p is pattern), None)
+    bar = next((b for b, c in enumerate(lane_data["song"]) if index is not None and c and c[0] == index and c[1] == 0), None)
+    if bar is None:
+        return lambda step: 0
+    return lambda step: chord_at(project, min(SONG_BARS - 1, bar + step // STEPS_PER_BAR), (step % STEPS_PER_BAR) // 4)
+
+
+def random_drums(bars, rng):
+    snare = rng.choice([1, 1, 2])                        # caisse claire, parfois clap
+    hats = rng.choice([EVERY_2, EVERY_2, ALL_16, [2, 6, 10, 14]])
+    kick_extra = rng.choice([[], [10], [7, 10], [3, 10], [6], [14]])
+    cells = set()
+    for b in range(bars):
+        o = b * STEPS_PER_BAR
+        last = b == bars - 1
+        kicks = [0, 8] + kick_extra
+        if rng.random() < 0.3:                           # petite variation de grosse caisse
+            kicks.append(rng.choice([3, 6, 11, 14]))
+        cells |= {(0, o + s) for s in kicks}
+        cells |= {(snare, o + s) for s in (4, 12)}
+        if rng.random() < 0.2:                           # coup fantôme
+            cells.add((snare, o + rng.choice([7, 15])))
+        open_hat = 14 if rng.random() < 0.35 else None
+        cells |= {(3, o + s) for s in hats if s != open_hat}
+        if open_hat is not None:
+            cells.add((4, o + open_hat))
+        if last and bars > 1 and rng.random() < 0.6:     # petit roulement à la fin du motif
+            for row in range(3, 5):
+                cells -= {(row, o + s) for s in range(12, 16)}
+            fill = rng.choice([[(1, 12), (1, 13), (1, 14), (1, 15)], [(1, 12), (6, 13), (6, 14), (5, 15)],
+                               [(1, 13), (1, 14), (1, 15)]])
+            cells |= {(r, o + s) for r, s in fill}
+    if rng.random() < 0.25:                              # coup de cymbale au début
+        cells.add((7, 0))
+        cells.discard((3, 0))
+    return [[r, s] for r, s in sorted(cells, key=lambda c: (c[1], c[0]))]
+
+
+def random_bass(bars, rng):
+    rhythm = rng.choice(BASS_RHYTHMS)
+    cells = []
+    for b in range(bars):
+        if b and rng.random() < 0.25:                    # un autre rythme pour varier
+            rhythm = rng.choice(BASS_RHYTHMS)
+        for i, (start, length) in enumerate(rhythm):
+            if start % 8 == 0:                           # temps forts : la base de l'accord (ou son octave)
+                row = pick(rng, {0: 6, 7: 1})
+            elif start % 4 == 0:
+                row = pick(rng, {0: 3, 4: 2, 7: 2, 2: 1})
+            else:                                        # contretemps : notes de passage permises
+                row = pick(rng, {0: 2, 4: 2, 7: 2, 2: 1, 5: 1, 1: 1})
+            if [row, b * STEPS_PER_BAR + start - 1] in cells:  # collée à la note d'avant : sinon elles se lient
+                row = 7 if row == 0 else 0
+            cells += [[row, b * STEPS_PER_BAR + s] for s in range(start, start + length)]
+    return cells
+
+
+def random_chords(project, bars, rng):
+    mode = KEYS[project["key"]][2]
+    moves = CHORD_MOVES[mode]
+    count = bars if bars > 1 else rng.choice([1, 2])     # un accord par mesure (ou deux sur une seule mesure)
+    for _ in range(200):
+        degrees = [rng.choice(CHORD_STARTS)]
+        while len(degrees) < count:
+            degrees.append(pick(rng, moves[degrees[-1]]))
+        if count == 1 or (degrees[-1] in CHORD_ENDS and degrees[-1] != degrees[0]):
+            break
+    beats = BEATS_PER_BAR * bars // count
+    return [d for d in degrees for _ in range(beats)]
+
+
+def random_melody(bars, chord_for_step, rng):
+    notes = []
+    for b in range(bars):
+        notes += [(b * STEPS_PER_BAR + s, length) for s, length in rng.choice(MELODY_RHYTHMS)]
+    if bars > 1 and rng.random() < 0.5:                  # la dernière mesure finit sur une note longue
+        last_bar = (bars - 1) * STEPS_PER_BAR
+        notes = [n for n in notes if n[0] < last_bar + 8]
+        start = notes[-1][0]
+        notes[-1] = (start, last_bar + STEPS_PER_BAR - start)
+    row = rng.choice([r for r in chord_rows(chord_for_step(0)) if 2 <= r <= 9])
+    cells = []
+    for i, (start, length) in enumerate(notes):
+        if i:
+            step = pick(rng, {1: 5, -1: 5, 2: 2, -2: 2, 0: 1, 3: 1, -3: 1})
+            if row > 10:                                 # on ne monte ni ne descend trop
+                step = -abs(step)
+            elif row < 3:
+                step = abs(step)
+            row = max(0, min(MELODY_ROWS - 1, row + step))
+        chord = chord_rows(chord_for_step(start))
+        if i == len(notes) - 1 or (start % 8 == 0 and rng.random() < 0.7):
+            row = min(chord, key=lambda r: (abs(r - row), r))  # note de l'accord la plus proche
+        if [row, start - 1] in cells:                    # collée à la même note : elles se lieraient
+            options = chord if i == len(notes) - 1 else [row - 1, row + 1]
+            row = min((r for r in options if r != row and 0 <= r < MELODY_ROWS), key=lambda r: abs(r - row))
+        cells += [[row, s] for s in range(start, start + length)]
+    return cells
+
+
+def random_pattern(project, lane, pattern, rng=random):
+    """Nouveau motif au hasard mais musical, de la même longueur que pattern (qui n'est pas modifié)."""
+    new = new_pattern(lane, pattern["name"], pattern["bars"])
+    bars = pattern["bars"]
+    for _ in range(20):                                  # chaque clic donne autre chose
+        if lane == "accords":
+            new["style"] = pattern.get("style", "tenu")
+            new["chords"] = random_chords(project, bars, rng)
+            same = new["chords"] == pattern.get("chords")
+        else:
+            if lane == "batterie":
+                new["cells"] = random_drums(bars, rng)
+            elif lane == "basse":
+                new["cells"] = random_bass(bars, rng)
+            else:
+                new["cells"] = random_melody(bars, placed_chords(project, lane, pattern), rng)
+            same = sorted(map(tuple, new["cells"])) == sorted(map(tuple, pattern.get("cells", [])))
+        if not same:
+            break
+    return new
+
+
 def write_atomic(path, text):
     """Écrit un fichier d'un seul coup : d'abord un fichier temporaire, puis on le met à la place.
     Une coupure de courant pendant l'écriture laisse donc l'ancien fichier intact, jamais un fichier à moitié écrit."""
